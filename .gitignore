@@ -1,0 +1,12 @@
+project/app_data
+.env
+__pycache__
+_recovered
+bin
+include
+lib
+project/core/code_cwe.db
+project/core/__pycache__
+project/logic/__pycache__
+project/utils/__pycache__
+share
