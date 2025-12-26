@@ -1,0 +1,44 @@
+docker run -d --name sonarqube \
+  -p 9000:9000 \
+  -v sonarqube_data:/opt/sonarqube/data \
+  -v sonarqube_extensions:/opt/sonarqube/extensions \
+  -v sonarqube_logs:/opt/sonarqube/logs \
+  sonarqube:community
+
+docker start sonarqube
+
+docker password:333666999Ss*
+
+
+
+kill every docker container except sonarqube (kill running containers)
+
+docker ps -a --format '{{.ID}} {{.Names}}' \
+  | awk '$2 != "sonarqube" {print $1}' \
+  | xargs -r docker rm -f
+
+
+semgrep login token = d4c4ea1483c3b97dfeda81a978b6944c36c018cb5aa1c4137de56076707dd4e6
+süresi ne işlevi ne bilmiyorum ??? 
+
+
+
+SNYK RED TEAM ????
+snyk'nin sast kısmı kod semantik tarama yapmıyor, sadece dependency check yapıyor 
+dependency check yapmak için LLM eğitmek mantıklı gelmediğinden bunu geçtim
+
+
+owasp top ten'deki bütün cwe'ler için ilk test yapıldıktan sonra
+2. db oluşturulacak analizde partial success vs. alan cwe'ler ile 
+2. db tamamlandıktan sonra LLM training yapılacak
+Local LLM'e ne katkımız oldu ? bunu ölçtükten sonra
+Github'dan veya securecodewarrior gibi platformlardan gerçek zafiyetli kodlar ile LLM training yapabiliriz
+sadece birisi ve iki seçenekte birlikte llm'e verilip sonuçlar karşılaştırılabilir.
+
+gerçek database'i oluştur artık
+
+Gerçek database'den besleme yap LLM'e
+
+maintest'te dast'ı nasıl yaptığım var aynısı kopyalanacak dast_pipeline'a sonra db_filler 
+
+Yarın authentication identification kısmını yapacaksın, yaptıktan sonra SAST, DAST sonra yeniden bütün db için analyser çalıştırıcan.
