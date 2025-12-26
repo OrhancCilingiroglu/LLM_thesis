@@ -33,16 +33,12 @@ def analyze_static_output(output):
     found_cwes = normalize_tags(output)  # to take cwes
     return ",".join(sorted(found_cwes)) if found_cwes else "None"  
 
-_CWE_PATTERN = re.compile(r"\b[cC][wW][eE][\s:._-]?\s*(\d+)\b")
-
-def _normalize_tags(text: str) -> set[str]:
-    return {f"CWE-{m.strip()}" for m in _CWE_PATTERN.findall(text or "")}
 
 def summarize_cwes(text: str) -> str:
-    tags = _normalize_tags(text)
+    tags = normalize_tags(text)
     return ",".join(sorted(tags)) if tags else "None" 
 
-def extract_sonar_tags(item):
+'''def extract_sonar_tags(item):
     text = (item.get("message", "") + item.get("rule", "") +
             item.get("description", "") + item.get("vulnerabilityProbability", "")).lower()
     tags = set()
@@ -80,3 +76,61 @@ def extract_sonar_tags(item):
             tags.add(cwe_code)
 
     return tags
+'''
+
+
+def extract_security_tags(item):
+    text = (item.get("message", "") + item.get("rule", "") +
+            item.get("description", "") + item.get("vulnerabilityProbability", "")).lower()
+    tags = set()
+    tags.update(re.findall(r"CWE-\d+", text))
+    keywords = {
+        "xss": "CWE-79",
+        "XSS": "CWE-79",
+        "cross-site scripting": "CWE-79",
+        "Cross-Site Scripting": "CWE-79",
+        "sql injection": "CWE-89",
+        "Sql Injection": "CWE-89",
+        "command injection": "CWE-89",
+        "Command Injection": "CWE-89",
+        "csrf": "CWE-352",
+        "CSRF": "CWE-352",
+        "cross-site request forgery": "CWE-352",
+        "Cross-Site Request Forgery": "CWE-352",
+        "file upload": "CWE-434",
+        "File Upload": "CWE-434",
+        "unrestricted file upload": "CWE-434",
+        "Unrestricted File Upload": "CWE-434",
+        "dangerous file type": "CWE-434",
+        "Dangerous Fle Type": "CWE-434",
+        "ssrf": "CWE-918",
+        "SSRF": "CWE-918",
+        "server-side request forgery": "CWE-918",
+        "Server-Side Request Forgery": "CWE-918",
+        "url fetch": "CWE-918",
+        }
+    for key, cwe_code in keywords.items():
+        if key in text:
+            tags.add(cwe_code)
+    return tags
+
+def filter_hotspots(hotspot_data):
+    for h in hotspot_data.get("hotspots", []):
+        file = h.get("component", "").split(":")[-1]
+        line = h.get("line", "?")
+        prob = h.get("vulnerabilityProbability", "UNKNOWN")
+        category = h.get("securityCategory", "unknown")
+        message = h.get("message", "").strip()
+        return (f"- [{file}:{line}] {prob} ({category}): {message}")
+
+
+def filter_issues(issue_data):
+    if issue_data.get("total", 0) == 0:
+        return "0"
+    for issue in issue_data.get("issues", []):
+        file = issue.get("component", "").split(":")[-1]
+        line = issue.get("line", "?")
+        severity = issue.get("severity", "UNKNOWN")
+        rule = issue.get("rule", "unknown")
+        message = issue.get("message", "").strip()
+        return (f"- [{file}:{line}] {severity} ({rule}): {message}")

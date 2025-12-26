@@ -11,23 +11,25 @@ import utils.message_parsers
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 sonar_token = os.getenv("usertoken")
 
 # SAST Commands
-def run_bandit_on_code(code: str) -> str:
+def run_bandit_on_code(code):
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
         tmp.write(code)
         fname = tmp.name
     try:
-        proc = subprocess.run(["bandit", "-r", fname], capture_output=True, text=True)
-        return utils.message_parsers.summarize_cwes(proc.stdout)
-    except Exception as e:
-        return f"error: {e}"
-    finally:
-        try: os.remove(fname)  # type: ignore[name-defined]
-        except Exception: pass
+        result = subprocess.run(["bandit", "-r", fname], capture_output=True, text=True)
+        bandit_result = utils.message_parsers.analyze_static_output(result.stdout)
+    except Exception:
+        bandit_result = "error"
+    #    result ="error"
+    os.remove(fname)
+    return bandit_result
+    #return result
 
 def run_semgrep_on_code(code: str, rulesets: default_semgrep_rules) -> str:
     rulesets = [r.strip() for r in (rulesets or []) if r and r.strip()]
@@ -70,64 +72,95 @@ def default_semgrep_rules() -> list[str]:
         "p/sql-injection",
     ]
 
-
-def run_sonarqube_on_code(code: str,
-                          host_url: Optional[str] = None,
-                          scanner_bin: Optional[str] = None,
-                          token_env_key: str = sonar_token) -> str:
-    token = os.getenv(token_env_key)
-    if not token:
-        return "error: sonar token missing"
-
-    host = host_url or os.getenv("SONAR_HOST_URL", "http://localhost:9000")
-    scanner = scanner_bin or os.getenv("SONAR_SCANNER_BIN", "/opt/sonar-scanner/bin/sonar-scanner")
+'''
+def run_snyk_on_code(code):
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
+        tmp.write(code)
+        fname = tmp.name
+    try:
+        result = subprocess.run(["snyk", "test", "--file="+fname, "--json"], capture_output=True, text=True)
+        if result.returncode == 0:
+            snyk_result = "None"
+        elif result.returncode == 1:
+            data = json.loads(result.stdout or "{}")
+            cwe_list = set()
+            for vuln in data.get("vulnerabilities", []):
+                identifiers = vuln.get("identifiers", {})
+                cwes = identifiers.get("CWE", [])
+                for cwe in cwes:
+                    cwe_list.add(str(cwe).split(":")[0].strip())
+            snyk_result = ",".join(sorted(cwe_list)) if cwe_list else "None"
+        else:
+            snyk_result = "error"
+    except Exception:
+        snyk_result = "error"
+    os.remove(fname)
+    return snyk_result
+'''
+    
+def run_sonarqube_on_code(code):
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        code_path = Path(tmpdir) / "app.py"
-        code_path.write_text(code, encoding="utf-8")
+        code_path = os.path.join(tmpdir, "app.py")
+        project_key = f"project_{os.getpid()}"
+        sonar_token = os.getenv("sonar_user_token")
 
-        project_key = f"project_{uuid.uuid4().hex}"
-        props = (
-            f"sonar.projectKey={project_key}\n"
-            f"sonar.sources=.\n"
-            f"sonar.language=py\n"
-            f"sonar.python.version=3\n"
-            f"sonar.sourceEncoding=UTF-8\n"
-            f"sonar.log.level=INFO\n"
-            f"sonar.host.url={host}\n"
-            f"sonar.token={token}\n"
-        )
-        (Path(tmpdir) / "sonar-project.properties").write_text(props, encoding="utf-8")
+        with open(code_path, "w") as f:
+            f.write(code)
 
+        with open(os.path.join(tmpdir, "sonar-project.properties"), "w") as f:
+            f.write(f"""
+sonar.projectKey={project_key}
+sonar.sources=.
+sonar.language=py
+sonar.python.version=3
+sonar.sourceEncoding=UTF-8
+sonar.log.level=INFO
+sonar.host.url=http://localhost:9000
+sonar.token={sonar_token}
+""")
+#sonar-scanner is built on the host machine
         try:
-            proc = subprocess.run([scanner], cwd=tmpdir, capture_output=True, text=True)
-            if proc.returncode != 0:
+            result = subprocess.run(["/opt/sonar-scanner/bin/sonar-scanner"], cwd=tmpdir, capture_output=True, text=True)
+            if result.returncode != 0:
+                print("SonarQube Error:", result.stderr)
                 return "error"
+
+            headers = {"Authorization": f"Bearer {sonar_token}"}
+            cwe_list = set()
+
+            # 1. Issues API
+            issues_url = f"http://localhost:9000/api/issues/search?componentKeys={project_key}"
+            response_issues = requests.get(issues_url, headers=headers)
+            if response_issues.status_code != 200:
+                print("SonarQube issues API error:", response_issues.text)
+                return "error"
+            issues_data = response_issues.json()
+
+            for issue in issues_data.get("issues", []):
+                cwe_list.update(utils.message_parsers.extract_security_tags(issue))
+
+            # 2. Hotspots API
+            hotspot_url = f"http://localhost:9000/api/hotspots/search?projectKey={project_key}"
+            response_hotspot = requests.get(hotspot_url, headers=headers)
+            if response_hotspot.status_code != 200:
+                print("SonarQube hotspots API error:", response_hotspot.text)
+                return "error"
+            hotspot_data = response_hotspot.json()
+
+            for hotspot in hotspot_data.get("hotspots", []):
+                cwe_list.update(utils.message_parsers.extract_security_tags(hotspot))
+
+            filtered_issues = utils.message_parsers.filter_issues(issues_data)
+            filtered_hotspots = utils.message_parsers.filter_hotspots(hotspot_data)
+
+            tags = (",".join(sorted(cwe_list)) if cwe_list else "None")
+            results = f"tags = {tags}; issues = {filtered_issues}; hotspot= {filtered_hotspots}"
+            return results
+
         except Exception as e:
-            return f"error: {e}"
-
-        try:
-            import requests
-            headers = {"Authorization": f"Bearer {token}"}
-            cwes: set[str] = set()
-
-            issues_url = f"{host}/api/issues/search?componentKeys={project_key}"
-            r1 = requests.get(issues_url, headers=headers, timeout=15)
-            if r1.status_code != 200:
-                return "error"
-            for issue in r1.json().get("issues", []):
-                cwes.update(utils.message_parsers.extract_sonar_tags(issue))
-
-            hot_url = f"{host}/api/hotspots/search?projectKey={project_key}"
-            r2 = requests.get(hot_url, headers=headers, timeout=15)
-            if r2.status_code != 200:
-                return "error"
-            for h in r2.json().get("hotspots", []):
-                cwes.update(utils.message_parsers.extract_sonar_tags(h))
-
-            return ",".join(sorted(cwes)) if cwes else "None"
-        except Exception as e:
-            return f"error: {e}"
+            print("SonarQube Exception:", e)
+            return "error"
 
 # Moved functions to callbacks for clean logic/core seperation
 

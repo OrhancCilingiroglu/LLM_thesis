@@ -1,61 +1,97 @@
-import docker
 from pathlib import Path
-import docker.errors
 import traceback
 
-class DockerManager:
-    def __init__(self, workdir, tag, port):
-        self.client = docker.from_env()
-        self.workdir = str(Path(workdir).resolve())
-        self.tag = f"app_{tag}" 
-        self.port = port
+import docker
+from docker.errors import DockerException, NotFound
 
-    def build_image(self):
+
+class DockerManager:
+    def __init__(self, workdir: str, tag: str, port: int):
+        self.workdir = str(Path(workdir).resolve())
+        self.tag = f"app_{tag}"
+        self.port = port
+        self.name = f"app_{tag}"
+
         try:
-            print(f"\n🔨 BUILDING Docker image: {self.tag}")
-            image, logs = self.client.images.build(path=self.workdir, tag=self.tag, rm=True)
+            # If it fails, uninstall any docker-py package, pip install docker
+            self.client = docker.from_env()
+        except DockerException as e:
+            print(f"FAIL: Docker client initialization failed: {e}")
+            self.client = None
+
+    def build_image(self) -> bool:
+        """Build Docker image from workdir with given tag."""
+        if not self.client:
+            print("FAIL: Docker client not initialized")
+            return False
+
+        try:
+            print(f"\nBUILD Docker image: {self.tag}")
+            image, logs = self.client.images.build(
+                path=self.workdir,
+                tag=self.tag,
+                rm=True,
+            )
+            # logs: iterable of dicts with "stream" usually
             for chunk in logs:
-                if 'stream' in chunk:
-                    print(chunk['stream'].strip())
-            print(f"SUCCESS : Docker image '{self.tag}' built successfully.")
+                if isinstance(chunk, dict) and "stream" in chunk:
+                    line = chunk["stream"].strip()
+                    if line:
+                        print(line)
+            print(f"SUCCESS: Image '{self.tag}' built.")
             return True
-        except Exception as e:
-            print("FAIL : Docker build failed:")
+
+        except Exception:
+            print("FAIL: Docker build failed:")
             traceback.print_exc()
             return False
 
-    def run_container(self):
+    def run_container(self, container_port: int | None = None):
+        """Run container from built image, bind workdir to /app and expose port."""
+        if not self.client:
+            print("FAIL: Docker client not initialized")
+            return None
+
         try:
-            print(f"\n PROCESS : STARTING Docker container from image: {self.tag}")
+            print(f"\nRUN Docker container from image: {self.tag}")
+            c_port = container_port or self.port
+            ports = {f"{c_port}/tcp": self.port}
+
             container = self.client.containers.run(
                 image=self.tag,
                 name=self.tag,
-                ports={f"{self.port}/tcp": self.port},
+                ports=ports,
                 volumes={self.workdir: {"bind": "/app", "mode": "rw"}},
-                detach=True
+                detach=True,
             )
-            print(f"SUCCESS : Container '{self.tag}' started on port {self.port}")
+            print(f"SUCCESS: Container '{self.tag}' started on port {self.port}")
             return container
-        except docker.errors.APIError as e:
-            print(f"FAIL : Failed to start container '{self.tag}': {e.explanation}")
-            return None
-        except Exception as e:
-            print("FAIL : Unexpected error during container start:")
+
+        except Exception:
+            print("FAIL: Unexpected error during container start:")
             traceback.print_exc()
             return None
 
-    def stop_and_remove(self):
-        try:
-            print(f"\nPROCESS : STOPPING and REMOVING container: {self.tag}")
-            container = self.client.containers.get(self.tag)
-            container.stop()
-            container.remove()   # bunlar test edilmeli bazen container name'ler çakışıyor demekki container silemiyor
-            print(f"SUCCESS :  Container '{self.tag}' stopped and removed.")
-            return True
-        except docker.errors.NotFound:
-            print(f"FAIL :  Container '{self.tag}' not found.")
+    def stop_and_remove(self) -> bool:
+        """Stop and remove container by name (tag)."""
+        if not self.client:
+            print("FAIL: Docker client not initialized")
             return False
-        except Exception as e:
-            print("FAIL :  Error while stopping/removing container:")
+
+        try:
+            print(f"\nSTOPPING and REMOVING container: {self.tag}")
+            try:
+                container = self.client.containers.get(self.tag)
+            except NotFound:
+                print(f"WARN: Container '{self.tag}' not found.")
+                return False
+
+            container.stop()
+            container.remove()
+            print(f"SUCCESS: Container '{self.tag}' stopped and removed.")
+            return True
+
+        except Exception:
+            print("FAIL: Error while stopping/removing container:")
             traceback.print_exc()
             return False

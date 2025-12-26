@@ -4,10 +4,9 @@ from utils import message_parsers, promptvariables
 import traceback
 import random
 
-
 db = db_handler.DBManager()
 fm = file_handler.FileManager()
-docker = docker_handler()
+#docker = docker_handler.DockerManager()
 zappolicy = "API"
 api_router = api_handler.ApiHandlerRouter()
 
@@ -84,6 +83,8 @@ def generate_code(cwe_list):
                 requirements = row["requirements"],
                 port = row["port"]
             )
+
+run_zap_scan(id, "API")
 
 ##! STATIC CODE ANALYSIS
 

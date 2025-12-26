@@ -5,7 +5,8 @@ import requests
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-
+openai_apikey = load_dotenv("openaikey")
+groq_apikey = load_dotenv("groq_key")
 
 class ApiHandlerRouter:
     def __init__(self):
@@ -45,15 +46,16 @@ class OpenAIClient:
         
         
 class GroqClient:
-    def __init__(self, api_key, model = "llama-3.3-70b-versatile"):
+    def __init__(self, model_in = "llama-3.3-70b-versatile"):
         self.api_key = os.getenv("groq_key")
         if not self.api_key:
             raise ValueError("Groq API key is not found")
         self.client = OpenAI(api_key=self.api_key)
+        self.model_in = model_in
 
-    def send_prompt(self, in_prompt: str, model_temp="llama-3.3-70b-versatile"):
+    def send_prompt(self, in_prompt: str):
         response = self.client.chat.completions.create(
-        model=model_temp,
+        model=self.model_in,
         messages=[
             {"role": "system", "content": "You write or check Python - Flask codes for CWE database"},
             {"role": "user", "content": in_prompt}
