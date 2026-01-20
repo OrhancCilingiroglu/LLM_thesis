@@ -126,7 +126,7 @@ class DBManager:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM code_cwe")
         total = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM code_cwe WHERE docker = 'tested-succesful'")
+        cursor.execute("SELECT COUNT(*) FROM code_cwe WHERE docker = 'tested-successful'")
         successful = cursor.fetchone()[0]
         conn.close()
 
@@ -134,6 +134,37 @@ class DBManager:
             return 0.0
         return successful / total
     
+    def get_secure_rate(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM code_cwe")
+        total = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT COUNT(*) 
+            FROM code_cwe 
+            WHERE secure = 'SECURE' 
+                OR secure = 1
+                OR UPPER(secure) = 'TRUE'
+            """)
+        secure_count = cursor.fetchone()[0]
+        conn.close()
+        if total == 0:
+            return 0.0
+        return secure_count / total
+    
+    def get_secure_docker_success_rate(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM code_cwe")
+        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM code_cwe WHERE docker = 'tested-successful' AND (secure = 1 OR UPPER(secure) = 'SECURE')")
+        successful = cursor.fetchone()[0]
+        conn.close()
+
+        if total == 0:
+            return 0.0
+        return successful / total
+
     def fetch_dast_data_by_id(self, code_id):
 
         conn = sqlite3.connect(self.db_path)
@@ -169,6 +200,32 @@ class DBManager:
         result = cursor.fetchone()
         conn.close()
         return result
+    # Mid project i changed how i save secure/vulnerable info.
+    # So this function will normalize the old and new values to boolean
+    def is_secure_by_id(self, code_id: int) -> bool:
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT secure FROM code_cwe WHERE id = ?", (code_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row or row[0] is None:
+            return False  # default: vulnerable
+        val = row[0]
+        # numeric / boolean
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, int):
+            return val == 1
+        # string normalization
+        s = str(val).strip().upper()
+        SECURE_TRUE = {"SECURE", "TRUE", "1", "YES", "Y"}
+        SECURE_FALSE = {"VULNERABLE", "INSECURE", "FALSE", "0", "NO", "N"}
+        if s in SECURE_TRUE:
+            return True
+        if s in SECURE_FALSE:
+            return False
+        # fallback: conservative
+        return False
     
     def get_CWE_by_id(self, code_id):
         conn = sqlite3.connect(self.db_path)

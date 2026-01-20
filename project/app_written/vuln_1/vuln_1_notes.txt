@@ -1,0 +1,5 @@
+Siber güvenlik uygulaması, basit bir tasarımı var
+kullanıcılar alice bob ve admin, şifreleri sql init scriptinde var
+kullanıcılar sadece post atabiliyor, admin kullanıcıların listesini görebiliyor
+admin'in ulaşması gereken sayfalarda require_admin fonksiyonu 403 dönüyor kullanıcılara
+

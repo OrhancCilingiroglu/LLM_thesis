@@ -1,12 +1,9 @@
 import os
 from openai import OpenAI
 from groq import Groq
-import requests
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-openai_apikey = load_dotenv("openaikey")
-groq_apikey = load_dotenv("groq_key")
 
 class ApiHandlerRouter:
     def __init__(self):
@@ -50,7 +47,7 @@ class GroqClient:
         self.api_key = os.getenv("groq_key")
         if not self.api_key:
             raise ValueError("Groq API key is not found")
-        self.client = OpenAI(api_key=self.api_key)
+        self.client = Groq(api_key=self.api_key)
         self.model_in = model_in
 
     def send_prompt(self, in_prompt: str):

@@ -178,6 +178,12 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
             for k, v in error_counts.most_common():
                 f.write(f"  - {k}: {v}\n")
 
+        secure_docker_ratio = db.get_secure_docker_success_rate()
+        f.write(f"\nSecure codes that Docker 'tested-successful' rate: {secure_docker_ratio:.2f}\n")
+
+        secure_ratio = db.get_secure_rate()
+        f.write(f"\nSecure code rate: {secure_ratio:.2f}\n")
+
         if total == 0:
             f.write("\nNo valid results to summarize.\n")
             print(f"✅ Correlation analysis completed. Output saved to → {output_file}")

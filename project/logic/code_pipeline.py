@@ -39,7 +39,7 @@ class PortAllocator:  # Port allocation got complex with 2 producer/states with 
 
 class AppSample:
     "This class holds every code, dockerfile, port, etc. attribute that will be generated"
-    def __init__(self, cwe, task, webstyle, product, is_secure, producer):
+    def __init__(self, cwe, task, webstyle, product, is_secure, producer, port):
         self.cwe = cwe
         self.task = task
         self.webstyle = webstyle
@@ -50,16 +50,15 @@ class AppSample:
         self.dockerfile = None
         self.sql_script = None
         self.requirements = None
-        self.port = None
+        self.port = port
         self.checks = []
     def __del__(self):
         print("AppSample deleted")
 
-    def set_reqs(self, dockerfile, sql_script, requirements, port):
+    def set_reqs(self, dockerfile, sql_script, requirements):
         self.dockerfile = dockerfile
         self.sql_script = sql_script
         self.requirements = requirements
-        self.port = port
 
     def set_code(self, code):
         self.code = code
