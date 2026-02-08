@@ -7,8 +7,8 @@ db = DBManager()
 
 if __name__ == "__main__":
     sast_scan(
-        start_id=2427,
-        end_id=2458,
+        start_id=3049,
+        end_id=3531,
         get_code=db.get_code,
         save_result=db.save_scan_results,
         run_bandit=True,

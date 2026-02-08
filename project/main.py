@@ -170,8 +170,20 @@ def generate_code(cwe_list):
                 port = row["port"]
             )
 
+'''
+generate_code(cwe_list = code_pipeline.A01_2025_Broken_Access_Control_list)
+generate_code(cwe_list = code_pipeline.A02_2025_Security_Misconfiguration_list)
+generate_code(cwe_list = code_pipeline.A03_2025_Sofware_Supply_Chain_list)
+generate_code(cwe_list = code_pipeline.A04_2025_Cryptographic_Failures_list)
+generate_code(cwe_list = code_pipeline.A05_2025_Injection_list)
+generate_code(cwe_list = code_pipeline.A06_2025_Insecure_Design_list)
+'''
+generate_code(cwe_list = code_pipeline.A06_leftover)
+generate_code(cwe_list = code_pipeline.A07_2025_Authentication_Failures_list)
+generate_code(cwe_list = code_pipeline.A08_2025_Software_or_Data_Integrity_Failures_list)
+generate_code(cwe_list = code_pipeline.A09_2025_Security_Logging_and_Alerting_Failures_list)
+generate_code(cwe_list = code_pipeline.A10_2025_Mishandling_of_Exceptional_Conditions_list)
 
-generate_code(cwe_list = code_pipeline.Insecure_Design_list)
 '''
 test_docker_runs2(first_id=2691, last_id=2691) 
 
@@ -185,7 +197,6 @@ sast_pipeline.sast_scan(
     run_semgrep = True,
     run_sonar = True,
 )
-
 
 dast_pipeline.dast_scan(
     start_id= 2555,

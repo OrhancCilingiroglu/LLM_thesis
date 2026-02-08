@@ -253,6 +253,14 @@ class DBManager:
         conn.close()
         return result  
 
+    def get_all_ids(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM code_cwe")
+        rows = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
     def mark_docker_tested_successful(self, code_id: int):
         self.update_docker_flag(code_id, "tested-successful")
 
@@ -264,15 +272,22 @@ class DBManager:
 
     #!! FOR DATA TRANSFORMATION BEFORE LLM TRAINING
 
-    def export_llm_jsonl(self, out_path: str, only_docker_status: str | None = None, limit: int | None = None,):
+    def export_llm_jsonl(
+        self,
+        out_path: str,
+        only_docker_status: str | None = None,
+        limit: int | None = None,
+    ):
         """
-        Write lines of db to json
-        {
-            "input": "<prompt>",
-            "target": "<json string olarak secure/CWE + tool sonuçları>"
-        }
-
-        - only_docker_status: If you want to only take the docker-run successfull examples type "tested-successfull" as in db.
+        Output JSONL per line:
+          {
+            "input": "<prompt string>",
+            "target": "secure" | "vulnerable",
+            "code": "<raw code>",
+            "cwe": "<CWE id>",
+            "tools": { ... }              # for training
+          }
+        - only_docker_status: "tested-successfull" (as in db).
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -300,7 +315,7 @@ class DBManager:
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         conn.close()
-        
+
         possible_tool_cols = [
             "bandit",
             "semgrep",
@@ -311,60 +326,60 @@ class DBManager:
         ]
         tool_cols = [c for c in possible_tool_cols if c in columns]
 
-        # 3) Write JSONL
+        def norm_label(x) -> str:
+            """
+            normalize secure column
+            """
+            s = str(x).strip().lower()
+            if s in ["secure", "safe", "1", "true"]:
+                return "secure"
+            # insecure/vulnerable/vuln/0/false vs.
+            return "vulnerable"
+
         written = 0
         with open(out_path, "w", encoding="utf-8") as f:
             for row in rows:
                 row_dict = dict(zip(columns, row))
 
                 code = row_dict.get("code", "") or ""
-                cwe = row_dict.get("CWE", "")
-                secure = row_dict.get("secure", "")
-                meta_parts = []
-                for key in ["id", "CWE", "secure", "producer", "codetask", "webproduct", "webstyle", "port", "docker"]:
-                    if key in row_dict:
-                        meta_parts.append(f"{key}: {row_dict.get(key)}")
-                meta_block = "\n".join(meta_parts) if meta_parts else "YOK"
+                cwe = row_dict.get("CWE", "") or ""
+                secure_val = row_dict.get("secure", "")
 
+                # ---- tools dict + readable block ----
+                tools_dict = {}
                 if tool_cols:
-                    tools_block = "\n".join(
-                        f"{col}: {row_dict.get(col)}" for col in tool_cols if row_dict.get(col) not in (None, "")
-                    )
-                else:
-                    tools_block = "YOK"
+                    for col in tool_cols:
+                        val = row_dict.get(col)
+                        if val not in (None, ""):
+                            tools_dict[col] = val
 
-                # LLM için input prompt
+                tools_block = "\n".join([f"- {k}: {v}" for k, v in tools_dict.items()]) if tools_dict else "NONE"
+
+                # ---- prompt (tools included) ----
                 prompt = (
-                "Below is a Python/Flask web application code snippet along with some metadata "
-                "and the outputs of various static and dynamic analysis tools.\n\n"
-                "Your task:\n"
-                "- Determine whether the code is secure or contains any vulnerabilities (insecure).\n"
-                "- If insecure, identify the relevant CWE identifiers, explain the vulnerability, and describe how to fix it.\n"
-                "- Provide an example patch or a secure code recommendation.\n\n"
-                "### Metadata:\n"
-                f"{meta_block}\n\n"
-                "### Code (Python/Flask):\n"
-                f"{code}\n\n"
-                "### Tool Outputs:\n"
-                f"{tools_block}\n\n"
-                "### Answer:\n"
-)
-
-                # Target: secure + CWE + tool sonuçlarını JSON string yapalım (distillation için)
-                target_obj = {
-                    "secure": secure,
-                    "CWE": cwe,
-                    "tools": {col: row_dict.get(col) for col in tool_cols},
-                }
-                target_str = json.dumps(target_obj, ensure_ascii=False)
+                    "You are a senior application security engineer.\n\n"
+                    "Your task:\n"
+                    "Analyze the given Python/Flask code and list the vulnerabilities as CWE IDs.\n"
+                    "### Code (Python/Flask):\n"
+                    "```python\n"
+                    f"{code}\n"
+                    "```\n\n"
+                )
+##! Buradaki prompt kısmı değiştirebiliriz, promptu değiştirmeden önce bir tekrar et. sonra değiştirip karşılaştır
+#! Lama 3.x, Llama 4, QWEN latest, Deepseek models,
+                target_str = norm_label(secure_val)
 
                 json_line = {
-                    "input": prompt,
-                    "target": target_str,
+                    "input": prompt,        # trainer için
+                    "target": target_str,   # SADECE "secure" / "vulnerable"
+                    # aşağıdakiler opsiyonel ama çok faydalı:
+                    "code": code,
+                    "cwe": cwe,
+                    "tools": tools_dict
                 }
 
                 json.dump(json_line, f, ensure_ascii=False)
                 f.write("\n")
                 written += 1
 
-        print(f"[export_llm_jsonl] {written} satır {out_path} dosyasına yazıldı.")
+        print(f"[export_llm_jsonl] {written} row {out_path} written to file.")

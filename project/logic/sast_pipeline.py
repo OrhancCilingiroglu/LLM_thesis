@@ -72,31 +72,6 @@ def default_semgrep_rules() -> list[str]:
         "p/sql-injection",
     ]
 
-'''
-def run_snyk_on_code(code):
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
-        tmp.write(code)
-        fname = tmp.name
-    try:
-        result = subprocess.run(["snyk", "test", "--file="+fname, "--json"], capture_output=True, text=True)
-        if result.returncode == 0:
-            snyk_result = "None"
-        elif result.returncode == 1:
-            data = json.loads(result.stdout or "{}")
-            cwe_list = set()
-            for vuln in data.get("vulnerabilities", []):
-                identifiers = vuln.get("identifiers", {})
-                cwes = identifiers.get("CWE", [])
-                for cwe in cwes:
-                    cwe_list.add(str(cwe).split(":")[0].strip())
-            snyk_result = ",".join(sorted(cwe_list)) if cwe_list else "None"
-        else:
-            snyk_result = "error"
-    except Exception:
-        snyk_result = "error"
-    os.remove(fname)
-    return snyk_result
-'''
     
 def run_sonarqube_on_code(code):
 
@@ -193,9 +168,15 @@ def sast_scan(
         s = run_semgrep_on_code(code, rules) if run_semgrep else None
         q = run_sonarqube_on_code(code) if run_sonar else None
 
-        if b is not None: save_result(code_id, "bandit", b)
-        if s is not None: save_result(code_id, "semgrep", s)
-        if q is not None: save_result(code_id, "sonarqube", q)
+        if b is not None: 
+            save_result(code_id, "bandit", b)
+        
+        if s is not None: 
+            save_result(code_id, "semgrep", s)
+        
+        if q is not None: 
+            save_result(code_id, "sonarqube", q)
+        
 
-       # print(f"id={code_id} bandit={b} semgrep={s} sonar={q}")
+        print(f"id={code_id} bandit={b} semgrep={s} sonar={q}")
     print("Analysis completed.")
