@@ -12,8 +12,8 @@ api_router = api_handler.ApiHandlerRouter()
 
 
 dast_pipeline.dast_scan(
-    start_id= 1712,
-    end_id = 2426,
+    start_id= 2811,
+    end_id = 3531,
     save_result = db.save_scan_results,
     run_zap = True,
     run_nikto = False,
