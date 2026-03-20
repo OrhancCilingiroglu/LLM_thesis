@@ -1,79 +1,153 @@
 from core.db_handler import DBManager
 import json
 from collections import Counter, defaultdict
+from utils import OWASP
 
 
-def analyze_cwe_correlation(db_cwe, sast_output, dast_output_json):
+OWASP_2025_MAP = {
+    "A01_2025_Broken_Access_Control": set(OWASP.A01_2025_Broken_Access_Control_list),
+    "A02_2025_Security_Misconfiguration": set(OWASP.A02_2025_Security_Misconfiguration_list),
+    "A03_2025_Sofware_Supply_Chain": set(OWASP.A03_2025_Sofware_Supply_Chain_list),
+    "A04_2025_Cryptographic_Failures": set(OWASP.A04_2025_Cryptographic_Failures_list),
+    "A05_2025_Injection": set(OWASP.A05_2025_Injection_list),
+    "A06_2025_Insecure_Design": set(OWASP.A06_2025_Insecure_Design_list),
+    "A07_2025_Authentication_Failures": set(OWASP.A07_2025_Authentication_Failures_list),
+    "A08_2025_Software_or_Data_Integrity_Failures": set(OWASP.A08_2025_Software_or_Data_Integrity_Failures_list),
+    "A09_2025_Security_Logging_and_Alerting_Failures": set(OWASP.A09_2025_Security_Logging_and_Alerting_Failures_list),
+    "A10_2025_Mishandling_of_Exceptional_Conditions": set(OWASP.A10_2025_Mishandling_of_Exceptional_Conditions_list),
+}
+
+def cwe_to_owasp_2025(db_cwe: str) -> str:
+    if not db_cwe:
+        return "UNMAPPED"
+    s = str(db_cwe).strip().upper()
+    if not s.startswith("CWE-"):
+        s = f"CWE-{s}"
+    try:
+        cwe_num = int(s.replace("CWE-", "").strip())
+    except ValueError:
+        return "UNMAPPED"
+    for cat, cwe_set in OWASP_2025_MAP.items():
+        if cwe_num in cwe_set:
+            return cat
+    return "UNMAPPED"
+
+PLACEHOLDERS = {"not-tested", "not_tested", "not tested", "na", "n/a", "none", "null", "nan", "-"}
+
+def safe_json_loads(raw):
+    if raw is None:
+        return None, "empty_zap_json"
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    s = str(raw).strip()
+    if not s:
+        return None, "empty_zap_json"
+    if s.lower() in PLACEHOLDERS:
+        return None, f"zap_unavailable:{s.lower()}"
+    if s[0] not in "{[":
+        return None, f"zap_json_not_json_prefix:{s[:30]}"
+    try:
+        return json.loads(s), None
+    except json.JSONDecodeError as e:
+        return None, f"invalid_zap_json:{e}"
+
+def normalize_secure(secure_raw) -> bool:
+    if isinstance(secure_raw, bool):
+        return secure_raw
+    if isinstance(secure_raw, int):
+        return bool(secure_raw)
+    if isinstance(secure_raw, str):
+        return secure_raw.strip().lower() == "secure"
+    return False
+
+def analyze_cwe_correlation(db_cwe, bandit_out, semgrep_out, sonarqube_out, dast_output_json):
     """
-    db_cwe: string, örn: 'CWE-79'
-    sast_output: string, örn: 'CWE-79, CWE-89'
-    dast_output_json: string (JSON), OWASP ZAP alert JSON
+    Extended version — tracks which tool detected the CWE individually
+    so we can calculate per-tool contribution later.
     """
     if not db_cwe:
         return {"error": "missing_db_cwe"}
 
-    # 1. Normalize CWE
     db_cwe = str(db_cwe).strip().upper()
     if not db_cwe.startswith("CWE-"):
         db_cwe = f"CWE-{db_cwe}"
 
-    # 2. Parse SAST Output
-    sast_cwes = set()
-    if sast_output:
-        for item in sast_output.split(","):
+    def parse_sast_cwes(raw):
+        found = set()
+        if not raw:
+            return found
+        for item in raw.split(","):
             item = item.strip().upper()
             if item.startswith("CWE-"):
-                sast_cwes.add(item)
+                found.add(item)
+        return found
 
-    # 3. Parse DAST (ZAP) Output
-    zap_cwes = set()
-    if not dast_output_json:
-        return {"error": "empty_zap_json"}
+    bandit_cwes    = parse_sast_cwes(bandit_out)
+    semgrep_cwes   = parse_sast_cwes(semgrep_out)
+    sonarqube_cwes = parse_sast_cwes(sonarqube_out)
+    sast_cwes      = bandit_cwes | semgrep_cwes | sonarqube_cwes
 
-    try:
-        zap_alerts = json.loads(dast_output_json)
+    # ZAP
+    zap_alerts, err = safe_json_loads(dast_output_json)
+    if err:
+        return {"error": err}
 
-        # ZAP bazen {"site":[...]} gibi dönebiliyor, bazen direkt alert listesi.
-        # Senin DB formatın list gibi görünüyor ama güvenli olsun:
-        if isinstance(zap_alerts, dict):
-            # Muhtemel format: {"alerts":[...]} veya {"site":[{"alerts":[...]}]}
-            if "alerts" in zap_alerts and isinstance(zap_alerts["alerts"], list):
-                zap_alerts = zap_alerts["alerts"]
-            elif "site" in zap_alerts and isinstance(zap_alerts["site"], list):
-                # site[0]["alerts"] gibi
-                merged = []
-                for s in zap_alerts["site"]:
-                    if isinstance(s, dict) and isinstance(s.get("alerts"), list):
-                        merged.extend(s["alerts"])
-                zap_alerts = merged
-            else:
-                zap_alerts = []
-
-        if not isinstance(zap_alerts, list):
+    if isinstance(zap_alerts, dict):
+        if "alerts" in zap_alerts and isinstance(zap_alerts["alerts"], list):
+            zap_alerts = zap_alerts["alerts"]
+        elif "site" in zap_alerts and isinstance(zap_alerts["site"], list):
+            merged = []
+            for s in zap_alerts["site"]:
+                if isinstance(s, dict) and isinstance(s.get("alerts"), list):
+                    merged.extend(s["alerts"])
+            zap_alerts = merged
+        else:
             zap_alerts = []
 
-        for alert in zap_alerts:
-            if not isinstance(alert, dict):
-                continue
-            cweid = str(alert.get("cweid", "")).strip()
-            if cweid and cweid != "0":
-                zap_cwes.add(f"CWE-{cweid.upper()}")
+    if not isinstance(zap_alerts, list):
+        zap_alerts = []
 
-    except json.JSONDecodeError as e:
-        return {"error": f"invalid_zap_json: {e}"}
+    zap_cwes = set()
+    for alert in zap_alerts:
+        if not isinstance(alert, dict):
+            continue
 
-    # 4. Correlation logic
-    db_in_sast = db_cwe in sast_cwes
-    db_in_zap = db_cwe in zap_cwes
+    # cweid part
+        cweid = str(alert.get("cweid", "")).strip()
+        if cweid and cweid not in ("0", "-1", ""):
+            zap_cwes.add(f"CWE-{cweid}")
+
+    # tags part
+        tags = alert.get("tags", {})
+        if isinstance(tags, dict):
+            for tag_key in tags:
+                tag_upper = tag_key.strip().upper()
+                if tag_upper.startswith("CWE-"):
+                    try:
+                        # Filters anything that looks like CWE but isn't a valid number (e.g., "CWE-ABC") to avoid false positives
+                        int(tag_upper.replace("CWE-", ""))
+                        zap_cwes.add(tag_upper)
+                    except ValueError:
+                        pass
+
+    db_in_bandit    = db_cwe in bandit_cwes
+    db_in_semgrep   = db_cwe in semgrep_cwes
+    db_in_sonarqube = db_cwe in sonarqube_cwes
+    db_in_sast      = db_cwe in sast_cwes
+    db_in_zap       = db_cwe in zap_cwes
     sast_zap_overlap = bool(sast_cwes & zap_cwes)
 
     result = {
-        "db_cwe": db_cwe,
-        "sast_cwes": list(sast_cwes),
-        "zap_cwes": list(zap_cwes),
-        "db_in_sast": db_in_sast,
-        "db_in_zap": db_in_zap,
-        "sast_zap_overlap": sast_zap_overlap
+        "db_cwe":        db_cwe,
+        "sast_cwes":     list(sast_cwes),
+        "zap_cwes":      list(zap_cwes),
+        "db_in_sast":    db_in_sast,
+        "db_in_zap":     db_in_zap,
+        "sast_zap_overlap": sast_zap_overlap,
+        # per-tool detection flags
+        "db_in_bandit":    db_in_bandit,
+        "db_in_semgrep":   db_in_semgrep,
+        "db_in_sonarqube": db_in_sonarqube,
     }
 
     if db_in_sast and db_in_zap:
@@ -96,172 +170,237 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
     db = DBManager()
     successful_ids = db.get_ids_by_docker_status("tested-successful")
 
-    # --- İstatistik toplayıcılar ---
     all_valid_results = []
-    error_counts = Counter()
-    corr_counts = Counter()
-    partial_counts = Counter()  # SAST_ONLY / ZAP_ONLY
+    error_counts      = Counter()
+    corr_counts       = Counter()
+    partial_counts    = Counter()
 
-    # CWE bazlı (db_cwe üzerinden)
-    per_cwe_corr = defaultdict(Counter)      # cwe -> Counter({"FULL MATCH": x, ...})
-    per_cwe_partial = defaultdict(Counter)   # cwe -> Counter({"SAST_ONLY": x, "ZAP_ONLY": x})
+    # per-tool detection counters (only vulnerable rows, only detected ones)
+    tool_detection_counts = Counter()   # how many times each tool detected the db_cwe
 
-    with open(output_file, "w") as f:
+    per_cwe_corr    = defaultdict(Counter)
+    per_cwe_partial = defaultdict(Counter)
+
+    per_owasp_total   = Counter()
+    per_owasp_corr    = defaultdict(Counter)
+    per_owasp_partial = defaultdict(Counter)
+
+    # detected CWEs per OWASP category (at least one partial or full match)
+    per_owasp_detected_cwes = defaultdict(set)
+
+    per_owasp_cwe_corr = defaultdict(lambda: defaultdict(lambda: defaultdict(Counter)))
+
+    secure_corr_counts     = Counter()
+    vulnerable_corr_counts = Counter()
+
+    with open(output_file, "w", encoding="utf-8") as f:
+
         for code_id in successful_ids:
             try:
-                dast_row = db.fetch_dast_data_by_id(code_id)
-                sast_row = db.fetch_sast_data_by_id(code_id)
-                db_cwe = db.get_CWE_by_id(code_id)
+                dast_row  = db.fetch_dast_data_by_id(code_id)
+                sast_row  = db.fetch_sast_data_by_id(code_id)
+                db_cwe_row = db.get_CWE_by_id(code_id)
 
-                # Tuple unpack
-                zap_json = dast_row[1] if dast_row and len(dast_row) > 1 else None
-                bandit = sast_row[1] if sast_row and len(sast_row) > 1 else None
-                semgrep = sast_row[2] if sast_row and len(sast_row) > 2 else None
-                sonarqube = sast_row[3] if sast_row and len(sast_row) > 3 else None
+                secure_row  = db.is_secure_by_id(code_id)
+                secure_raw  = secure_row[0] if isinstance(secure_row, tuple) else secure_row
+                is_secure   = normalize_secure(secure_raw)
+                secure_label = "Secure" if is_secure else "Vulnerable"
 
-                sast_combined = ",".join(filter(None, [bandit, semgrep, sonarqube]))
-                db_cwe = str(db_cwe[0] if isinstance(db_cwe, tuple) else db_cwe).strip().upper() if db_cwe else ""
+                zap_json   = dast_row[1]  if dast_row  and len(dast_row)  > 1 else None
+                bandit     = sast_row[1]  if sast_row  and len(sast_row)  > 1 else None
+                semgrep    = sast_row[2]  if sast_row  and len(sast_row)  > 2 else None
+                sonarqube  = sast_row[3]  if sast_row  and len(sast_row)  > 3 else None
 
-                result = analyze_cwe_correlation(db_cwe, sast_combined, zap_json)
-                result["code_id"] = code_id
+                db_cwe = str(
+                    db_cwe_row[0] if isinstance(db_cwe_row, tuple) else db_cwe_row
+                ).strip().upper() if db_cwe_row else ""
+
+                owasp_cat = cwe_to_owasp_2025(db_cwe)
+
+                result = analyze_cwe_correlation(db_cwe, bandit, semgrep, sonarqube, zap_json)
+
+                per_owasp_total[owasp_cat] += 1
 
                 if "error" in result:
-                    err = result["error"]
-                    error_counts[err] += 1
-                    f.write(f"[!] ID: {code_id} | Error: {err}\n")
+                    error_counts[result["error"]] += 1
                     continue
 
-                # normal sonuç
                 all_valid_results.append(result)
 
                 corr = result.get("correlation", "UNKNOWN")
                 corr_counts[corr] += 1
 
-                # partial breakdown
-                if corr == "PARTIAL MATCH":
-                    ptype = result.get("partial_type") or "UNKNOWN_PARTIAL"
-                    partial_counts[ptype] += 1
+                if is_secure:
+                    secure_corr_counts[corr] += 1
+                else:
+                    vulnerable_corr_counts[corr] += 1
 
-                # CWE bazlı
+                if corr == "PARTIAL MATCH":
+                    partial_counts[result.get("partial_type") or "UNKNOWN_PARTIAL"] += 1
+
                 cwe = result.get("db_cwe", "CWE-UNKNOWN")
                 per_cwe_corr[cwe][corr] += 1
                 if corr == "PARTIAL MATCH":
-                    ptype = result.get("partial_type") or "UNKNOWN_PARTIAL"
-                    per_cwe_partial[cwe][ptype] += 1
+                    per_cwe_partial[cwe][result.get("partial_type") or "UNKNOWN_PARTIAL"] += 1
 
-                f.write(
-                    f"ID: {result['code_id']} | DB_CWE: {result['db_cwe']} | "
-                    f"SAST: {result['sast_cwes']} | ZAP: {result['zap_cwes']} | "
-                    f"Correlation: {result['correlation']}"
-                )
-                if result.get("partial_type"):
-                    f.write(f" | PartialType: {result['partial_type']}")
-                f.write("\n")
+                per_owasp_corr[owasp_cat][corr] += 1
+                per_owasp_cwe_corr[owasp_cat][cwe][secure_label][corr] += 1
+                if corr == "PARTIAL MATCH":
+                    per_owasp_partial[owasp_cat][result.get("partial_type") or "UNKNOWN_PARTIAL"] += 1
 
-            except Exception as e:
+                # track detected CWEs (partial or full) per OWASP category
+                if corr in ("FULL MATCH", "PARTIAL MATCH"):
+                    per_owasp_detected_cwes[owasp_cat].add(cwe)
+
+                # per-tool contribution — only count vulnerable rows where that tool detected it
+                if not is_secure:
+                    if result.get("db_in_bandit"):
+                        tool_detection_counts["bandit"] += 1
+                    if result.get("db_in_semgrep"):
+                        tool_detection_counts["semgrep"] += 1
+                    if result.get("db_in_sonarqube"):
+                        tool_detection_counts["sonarqube"] += 1
+                    if result.get("db_in_zap"):
+                        tool_detection_counts["owasp_zap"] += 1
+
+            except Exception:
                 error_counts["exception"] += 1
-                f.write(f"[!] ID: {code_id} | Exception: {str(e)}\n")
 
         # =========================
-        #        SUMMARY
+        # SUMMARY
         # =========================
         f.write("\n" + "=" * 80 + "\n")
         f.write("SUMMARY\n")
         f.write("=" * 80 + "\n")
 
-        total = len(all_valid_results)
-        f.write(f"Total successful IDs: {len(successful_ids)}\n")
-        f.write(f"Total valid analyzed results: {total}\n")
+        total_valid = len(all_valid_results)
+        f.write(f"Total docker tested-successful IDs  : {len(successful_ids)}\n")
+        f.write(f"Total valid analyzed results        : {total_valid}\n")
 
         if error_counts:
             f.write("\nErrors:\n")
             for k, v in error_counts.most_common():
                 f.write(f"  - {k}: {v}\n")
 
-        secure_docker_ratio = db.get_secure_docker_success_rate()
-        f.write(f"\nSecure codes that Docker 'tested-successful' rate: {secure_docker_ratio:.2f}\n")
+        f.write(f"\nSecure codes docker success rate : {db.get_secure_docker_success_rate():.2f}\n")
+        f.write(f"Secure code rate                 : {db.get_secure_rate():.2f}\n")
 
-        secure_ratio = db.get_secure_rate()
-        f.write(f"\nSecure code rate: {secure_ratio:.2f}\n")
-
-        if total == 0:
+        if total_valid == 0:
             f.write("\nNo valid results to summarize.\n")
-            print(f"✅ Correlation analysis completed. Output saved to → {output_file}")
+            print(f"Correlation analysis completed → {output_file}")
             return
 
-        # Genel oranlar
-        f.write("\nOverall correlation distribution:\n")
+        f.write("\nOverall correlation distribution (valid only):\n")
         for k, v in corr_counts.most_common():
-            pct = (v / total) * 100
-            f.write(f"  - {k}: {v} ({pct:.2f}%)\n")
+            f.write(f"  - {k}: {v} ({v/total_valid*100:.2f}%)\n")
 
-        # Partial kırılımı
+        total_secure_valid = sum(secure_corr_counts.values())
+        total_vuln_valid   = sum(vulnerable_corr_counts.values())
+        f.write(f"\nValid results — Secure: {total_secure_valid} | Vulnerable: {total_vuln_valid}\n")
+
+        if total_secure_valid > 0:
+            f.write("  Secure correlation distribution:\n")
+            for k, v in secure_corr_counts.most_common():
+                f.write(f"    - {k}: {v} ({v/total_secure_valid*100:.2f}%)\n")
+
+        if total_vuln_valid > 0:
+            f.write("  Vulnerable correlation distribution:\n")
+            for k, v in vulnerable_corr_counts.most_common():
+                f.write(f"    - {k}: {v} ({v/total_vuln_valid*100:.2f}%)\n")
+
         if corr_counts.get("PARTIAL MATCH", 0) > 0:
             partial_total = corr_counts["PARTIAL MATCH"]
             f.write("\nPARTIAL MATCH breakdown:\n")
             for k, v in partial_counts.most_common():
-                pct = (v / partial_total) * 100
-                f.write(f"  - {k}: {v} ({pct:.2f}% of partial)\n")
+                f.write(f"  - {k}: {v} ({v/partial_total*100:.2f}% of partial)\n")
 
-        # CWE bazlı dominant sonuçlar
-        f.write("\nPer-CWE dominant outcomes (by DB_CWE):\n")
-        dominant_map = {}
-        for cwe, counter in sorted(per_cwe_corr.items(), key=lambda x: sum(x[1].values()), reverse=True):
-            total_cwe = sum(counter.values())
-            dominant, dom_count = counter.most_common(1)[0]
-            dominant_map[cwe] = dominant
-            f.write(
-                f"  - {cwe} | total={total_cwe} | dominant={dominant} ({dom_count}/{total_cwe}) | "
-                f"FULL={counter.get('FULL MATCH', 0)} PARTIAL={counter.get('PARTIAL MATCH', 0)} "
-                f"TOOL_NOT_DB={counter.get('TOOL MATCH BUT NOT DB', 0)} NO={counter.get('NO MATCH', 0)}\n"
-            )
+        # =========================
+        # TOOL CONTRIBUTION
+        # =========================
+        f.write("\n" + "=" * 80 + "\n")
+        f.write("TOOL DETECTION CONTRIBUTION (vulnerable rows only)\n")
+        f.write("=" * 80 + "\n")
+        f.write("Counts how many times each tool independently detected the expected CWE.\n")
+        f.write("One row can be counted by multiple tools if they all found it.\n\n")
 
-        # Örnek verebileceğin FULL MATCH CWE'ler
-        full_match_cwes = sorted(
-            [cwe for cwe, cnt in per_cwe_corr.items() if cnt.get("FULL MATCH", 0) > 0],
-            key=lambda c: per_cwe_corr[c].get("FULL MATCH", 0),
-            reverse=True
-        )
-        f.write("\nCWEs with at least one FULL MATCH (good examples to cite):\n")
-        if full_match_cwes:
-            for cwe in full_match_cwes:
-                f.write(f"  - {cwe} (FULL={per_cwe_corr[cwe].get('FULL MATCH', 0)})\n")
+        total_tool_hits = sum(tool_detection_counts.values())
+        if total_tool_hits == 0:
+            f.write("  No tool detections found.\n")
         else:
-            f.write("  (none)\n")
+            for tool, count in tool_detection_counts.most_common():
+                pct = count / total_tool_hits * 100
+                f.write(f"  - {tool:<15}: {count:>5} detections  ({pct:.2f}% of all tool hits)\n")
+            f.write(f"\n  Total tool hits (sum across tools) : {total_tool_hits}\n")
+            f.write(f"  Unique vulnerable rows analyzed    : {total_vuln_valid}\n")
 
-        # Partial match CWE'ler
-        partial_match_cwes = sorted(
-            [cwe for cwe, cnt in per_cwe_corr.items() if cnt.get("PARTIAL MATCH", 0) > 0],
-            key=lambda c: per_cwe_corr[c].get("PARTIAL MATCH", 0),
-            reverse=True
-        )
-        f.write("\nCWEs with PARTIAL MATCH occurrences:\n")
-        if partial_match_cwes:
-            for cwe in partial_match_cwes:
-                pt = per_cwe_partial[cwe]
-                f.write(
-                    f"  - {cwe} (PARTIAL={per_cwe_corr[cwe].get('PARTIAL MATCH', 0)} | "
-                    f"SAST_ONLY={pt.get('SAST_ONLY', 0)} ZAP_ONLY={pt.get('ZAP_ONLY', 0)})\n"
-                )
-        else:
-            f.write("  (none)\n")
+        # =========================
+        # OWASP CATEGORY SUMMARY
+        # =========================
+        f.write("\n" + "=" * 80 + "\n")
+        f.write("OWASP CATEGORY SUMMARY\n")
+        f.write("=" * 80 + "\n")
 
-        # Tamamen NO MATCH olan CWE'ler (hepsi NO MATCH)
-        trash_cwes = []
-        for cwe, cnt in per_cwe_corr.items():
-            total_cwe = sum(cnt.values())
-            if total_cwe > 0 and cnt.get("NO MATCH", 0) == total_cwe:
-                trash_cwes.append(cwe)
+        for cat, cat_total in per_owasp_total.most_common():
+            f.write(f"\n[{cat}] docker tested-successful count: {cat_total}\n")
 
-        trash_cwes = sorted(trash_cwes)
-        f.write("\nCWEs with ONLY NO MATCH results (candidates to discard as 'completely useless'):\n")
-        if trash_cwes:
-            for cwe in trash_cwes:
-                f.write(f"  - {cwe} (total={sum(per_cwe_corr[cwe].values())})\n")
-        else:
-            f.write("  (none)\n")
+            cat_corr    = per_owasp_corr[cat]
+            valid_in_cat = sum(cat_corr.values())
+            f.write(f"  Valid analyzed: {valid_in_cat}\n")
 
-    print(f"✅ Correlation analysis completed. Output saved to → {output_file}")
+            f.write("  Correlation distribution:\n")
+            if valid_in_cat == 0:
+                f.write("    - (no valid results)\n")
+            else:
+                for k, v in cat_corr.most_common():
+                    f.write(f"    - {k}: {v} ({v/valid_in_cat*100:.2f}%)\n")
+
+            if cat_corr.get("PARTIAL MATCH", 0) > 0:
+                ptotal = cat_corr["PARTIAL MATCH"]
+                f.write("  Partial breakdown:\n")
+                for pk, pv in per_owasp_partial[cat].most_common():
+                    f.write(f"    - {pk}: {pv} ({pv/ptotal*100:.2f}% of partial)\n")
+
+            # detected CWEs — at least one partial or full match
+            detected = sorted(per_owasp_detected_cwes.get(cat, set()))
+            f.write(f"  CWEs with at least one detection (partial or full): {len(detected)}\n")
+            if detected:
+                f.write("    " + ", ".join(detected) + "\n")
+            else:
+                f.write("    - (none detected)\n")
+
+            # full CWE breakdown
+            f.write("  CWE breakdown:\n")
+            cwe_map = per_owasp_cwe_corr[cat]
+            if not cwe_map:
+                f.write("    - (empty)\n")
+            else:
+                def cwe_total_count(item):
+                    _, label_dict = item
+                    return sum(sum(c.values()) for c in label_dict.values())
+
+                for cwe, label_dict in sorted(cwe_map.items(), key=cwe_total_count, reverse=True):
+                    for secure_label in ["Secure", "Vulnerable"]:
+                        ccounter = label_dict.get(secure_label)
+                        if not ccounter:
+                            continue
+                        cwe_total = sum(ccounter.values())
+                        if secure_label == "Secure":
+                            no_match_count = ccounter.get("NO MATCH", 0)
+                            flagged_count  = cwe_total - no_match_count
+                            f.write(
+                                f"    - {cwe} | {secure_label:<10} | total={cwe_total} | "
+                                f"tested-secure={no_match_count}, vulnerable={flagged_count}\n"
+                            )
+                        else:
+                            f.write(
+                                f"    - {cwe} | {secure_label:<10} | total={cwe_total} | "
+                                f"FULL={ccounter.get('FULL MATCH', 0)} "
+                                f"PARTIAL={ccounter.get('PARTIAL MATCH', 0)} "
+                                f"TOOL_NOT_DB={ccounter.get('TOOL MATCH BUT NOT DB', 0)} "
+                                f"NO={ccounter.get('NO MATCH', 0)}\n"
+                            )
+
+    print(f"Correlation analysis completed → {output_file}")
 
 
 run_modular_correlation_analysis()

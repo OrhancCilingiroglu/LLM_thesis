@@ -21,6 +21,37 @@ zappolicy = "API"
 api_router = api_handler.ApiHandlerRouter()
 
 
+def test_docker_runs(first_id, last_id):
+    for id in range(first_id, last_id):
+        code, dockerfile, sql_script, port_temp, reqs, docker = db.get_files_by_id(id)
+        if docker != "not-tested":
+            print(f"SKIP DOCKER TEST : code_id = {id} because docker status was {docker}")
+        else:
+            try:
+                workdir_temp = fm.setup_files(id, code, dockerfile, sql_script, reqs)
+                if fm.run_sql_script(id, sql_script):
+                    print(f"SQL script executed successfully for code_id={id}.")
+                else:
+                    print(f"SQL script execution failed for code_id={id}.")
+                    db.mark_sql_failed(id)
+                tag = id
+                dm = DockerManager(workdir=workdir_temp, tag=id, port=port_temp)
+                if dm.build_image():
+                    if dm.run_container():
+                        print(f"DOCKER RUN SUCCESS: code_id={id} Docker container ran successfully.")
+                        db.mark_docker_tested_successful(id)
+                    else:
+                        print(f"DOCKER RUN FAIL: code_id={id} Docker container failed to run.")
+                        db.mark_docker_tested_failed(id)
+                else:
+                    print(f"DOCKER BUILD FAIL: code_id={id} Docker image build failed.")
+                    db.mark_docker_tested_failed
+                dm.stop_and_remove()
+                fm.remove_files(id)
+            except Exception as e:
+                traceback.print_exc()
+                print(f"FAIL: code_id={id} Docker test error: {e}")
+
 def test_docker_runs2(first_id, last_id):
     for code_id in range(first_id, last_id + 1):
         code, dockerfile, sql_script, port_temp, reqs, docker_status = db.get_files_by_id(code_id)
@@ -83,4 +114,4 @@ def test_docker_runs2(first_id, last_id):
             except Exception:
                 pass
 
-test_docker_runs2(2491, 5000)
+test_docker_runs2(3654, 5000)

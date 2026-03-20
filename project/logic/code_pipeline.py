@@ -43,7 +43,6 @@ A05_2025_Injection_list = [20,74, 76, 77, 78, 79, 80, 83, 86, 88, 89, 90, 91, 93
 A06_2025_Insecure_Design_list = [73, 183, 256, 266, 269, 286, 311, 312, 313, 316, 362, 382, 419, 434, 436, 444, 451, 454,
                         472, 501, 522, 525, 539, 598, 602, 628, 642, 653, 656, 657, 676, 693, 799, 807, 841, 1021,
                         1022, 1125]
-A06_leftover = [653, 656, 657, 676, 693, 799, 807, 841, 1021,1022, 1125]
 A07_2025_Authentication_Failures_list = [258, 259, 287, 288, 289, 290, 291, 293, 294, 295, 297, 298, 299, 300, 302, 303, 304,
                                 305, 306, 307, 308, 309, 346, 350, 384, 521, 613, 620, 640, 798, 940, 941, 1390, 1391,
                                 1392, 1393]
@@ -95,8 +94,16 @@ class AppSample:
         self.code = code
 
     def control_checks(self, input):
-        self.checks.append(input)
-        return all(x==self.checks[0] for x in self.checks)
+        # Sadece SECURE/VULNERABLE keyword'ünü yakala
+        normalized = input.strip().upper()
+        if "VULNERABLE" in normalized:
+            verdict = "VULNERABLE"
+        elif "SECURE" in normalized:
+            verdict = "SECURE"
+        else:
+            verdict = input.strip()  # fallback
+        self.checks.append(verdict)
+        return all(x == self.checks[0] for x in self.checks)
 
     def get_all(self):
         return {

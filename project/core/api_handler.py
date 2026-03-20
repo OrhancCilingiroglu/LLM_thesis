@@ -2,6 +2,7 @@ import os
 from openai import OpenAI
 from groq import Groq
 from dotenv import load_dotenv
+import anthropic
 load_dotenv(override=True)
 
 
@@ -10,6 +11,7 @@ class ApiHandlerRouter:
         self.handlers = {
             "openai": OpenAIClient(),
             "groq": GroqClient(),
+            "claude": ClaudeClient(), 
         }
     def send_prompt(self, in_prompt: str, producer: str) -> str:
         "Route to true client according to input"
@@ -65,4 +67,34 @@ class GroqClient:
             return [model.id for model in self.client.models.list().data]
         except Exception as e:
             print(f"[!] Groq connection failed: {e}")
+            return None
+
+class ClaudeClient:
+    def __init__(self, model_in="claude-haiku-4-5"):   # claude-sonnet-4-5 idi sonradan haiku yaptım 
+        self.api_key = os.getenv("claude_key")          # .env'e CLAUDE_KEY ekle
+        if not self.api_key:
+            raise ValueError("Claude API key is not found")
+        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.model_in = model_in
+
+    def send_prompt(self, in_prompt: str):
+        response = self.client.messages.create(
+            model=self.model_in,
+            max_tokens=8096,
+            system="You write or check Python - Flask codes for CWE database",
+            messages=[{"role": "user", "content": in_prompt}],
+        )
+        return response.content[0].text.strip()
+
+    def test_connection(self):
+        try:
+            # Minimal bir istek atarak bağlantıyı test et
+            self.client.messages.create(
+                model=self.model_in,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return True
+        except Exception as e:
+            print(f"[!] Claude connection failed: {e}")
             return None

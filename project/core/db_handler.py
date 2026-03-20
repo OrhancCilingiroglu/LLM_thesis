@@ -47,6 +47,15 @@ class DBManager:
         finally:
             conn.close()
 
+    def get_id_range(self) -> tuple[int, int]:
+        """Returns the ID range of DB"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(id), MAX(id) FROM code_cwe")
+        row = cursor.fetchone()
+        conn.close()
+        return (row[0] or 0, row[1] or 0)
+
     def update_docker_flag(self, code_id: int, status: str):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -164,6 +173,14 @@ class DBManager:
         if total == 0:
             return 0.0
         return successful / total
+    
+    def count_rows_by_cwe(self, cwe: int) -> int:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM code_cwe WHERE CWE = ?", (cwe,))
+        successful = cursor.fetchone()[0]
+        conn.close()
+        return successful
 
     def fetch_dast_data_by_id(self, code_id):
 

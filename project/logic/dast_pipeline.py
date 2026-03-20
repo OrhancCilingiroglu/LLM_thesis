@@ -106,24 +106,37 @@ def dast_scan(
     start_id: int,
     end_id: int,
     save_result: SaveFn,
-    run_zap: bool = True,
+    run_zap:   bool = True,
     run_nikto: bool = True,
-    run_burp: bool = True,
-    zappolicy_in: Optional[Sequence[str]] = None,) -> None:
+    run_burp:  bool = False,
+    zappolicy_in: Optional[Sequence[str]] = None,
+) -> None:
 
-    if zappolicy_in is not None:
-        zappolicy = zappolicy_in
-    else:
-        zappolicy = "API"
+    zappolicy = zappolicy_in if zappolicy_in is not None else "API"
+
+    # pull not-tested ids once at the start, no need to hit db on every iteration
+    not_tested_map = db.get_not_tested_tools()
+    zap_pending    = set(not_tested_map.get("owasp_zap", []))
+    nikto_pending  = set(not_tested_map.get("nicto", []))
+    burp_pending   = set(not_tested_map.get("burpsuite", []))
 
     for code_id in range(start_id, end_id + 1):
 
-        o = build_and_zap(code_id, zappolicy) if run_zap else None
-        s = build_and_nikto(code_id) if run_nikto else None
-        q = build_and_burp(code_id) if run_burp else None
+        if run_zap and code_id in zap_pending:
+            o = build_and_zap(code_id, zappolicy)
+            if o is not None:
+                save_result(code_id, "owasp_zap", o)
+        else:
+            print(f"SKIP ZAP: code_id={code_id} already scanned or not selected")
 
-        if o is not None: save_result(code_id, "owasp_zap", o)
-        if s is not None: save_result(code_id, "nicto", s)
-        if q is not None: save_result(code_id, "burpsuite", q)
+        if run_nikto and code_id in nikto_pending:
+            s = build_and_nikto(code_id)
+            if s is not None:
+                save_result(code_id, "nicto", s)
+
+        if run_burp and code_id in burp_pending:
+            q = build_and_burp(code_id)
+            if q is not None:
+                save_result(code_id, "burpsuite", q)
 
     print("DAST automation completed.")
