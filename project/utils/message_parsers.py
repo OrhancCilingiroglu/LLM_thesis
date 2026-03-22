@@ -165,7 +165,10 @@ CWE_TO_BURP_CONFIG = {
     "CWE-96":  "CWE-96-SSI-Injection",
     "CWE-97":  "CWE-97-SSI-Injection",
     "CWE-113": "CWE-113-HTTP-Header-Injection",
-    "CWE-116": "CWE-116-Improper-Encoding-Escaping"
-    "CWE-159": "CWE-159-Improper-Handling-Elements"
+    "CWE-116": "CWE-116-Improper-Encoding-Escaping",
+    "CWE-159": "CWE-159-Improper-Handling-Elements",
+    "CWE-20":
+    "CWE-644":
+    "CWE-643":
     "default": "Audit checks - all except time-based detection methods",
 }
