@@ -134,3 +134,38 @@ def filter_issues(issue_data):
         rule = issue.get("rule", "unknown")
         message = issue.get("message", "").strip()
         return (f"- [{file}:{line}] {severity} ({rule}): {message}")
+
+
+BURP_TYPE_TO_CWE = {
+    1049088:   "CWE-89",   # SQL injection
+    134217728: "CWE-89",   # SQLite injection
+    2097920:   "CWE-79",   # XSS reflected
+    2097152:   "CWE-79",   # XSS stored
+    4194816:   "CWE-78",   # OS command injection
+    2362881:   "CWE-94",   # Server-side template injection
+    2097921:   "CWE-95",   # JS injection
+    2097928:   "CWE-93",   # HTTP header injection
+    1048832:   "CWE-77",   # OS command injection
+    1048832:   "CWE-78",
+
+    16777728:  None,        # Unencrypted communications (noise)
+    4197376:   None,        # Input returned in response (noise)
+}
+
+CWE_TO_BURP_CONFIG = {
+    "CWE-77":  "CWE-77-78-Command-Injection",   
+    "CWE-78":  "CWE-77-78-Command-Injection",
+    "CWE-79":  "CWE-79-Cross-site-scripting",
+    "CWE-80":  "CWE-80-XSS",
+    "CWE-90":  "CWE-90-LDAP-Injection",
+    "CWE-91":  "CWE-91-XML-Injection",
+    "CWE-93":  "CWE-93-CRLF-SMTP-Injection",
+    "CWE-94":  "CWE-94-Command-Injection",
+    "CWE-95":  "CWE-95-Eval-Injection",
+    "CWE-96":  "CWE-96-SSI-Injection",
+    "CWE-97":  "CWE-97-SSI-Injection",
+    "CWE-113": "CWE-113-HTTP-Header-Injection",
+    "CWE-116": "CWE-116-Improper-Encoding-Escaping"
+    "CWE-159": "CWE-159-Improper-Handling-Elements"
+    "default": "Audit checks - all except time-based detection methods",
+}

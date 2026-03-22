@@ -1,3 +1,4 @@
+from json import tool
 import sqlite3
 import os
 import json
@@ -123,10 +124,58 @@ class DBManager:
     def save_scan_results(self, id, tool, results):
         if tool not in {"bandit", "owasp_zap", "nikto", "burpsuite", "semgrep", "sonarqube"}:
             raise ValueError("ERROR : invalid tool name for db column")
+    
+        if tool == "burpsuite":
+            self.save_burp_scan_results(code_id=id, burp_json=results)
+            parsed = json.loads(results) if results else []
+            if parsed:
+                # We have to check if burp really found the targeted CWE
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT CWE FROM code_cwe WHERE id = ?", (id,))
+                row = cursor.fetchone()
+                conn.close()
+                row_cwe = f"CWE-{row[0]}" if row else None
+                mapped_cwes = {r.get("mapped_cwe") for r in parsed}
+                status = "found" if row_cwe in mapped_cwes else "not-found"
+            else:
+                status = "not-found"
+            results = status
+
         query = f"UPDATE code_cwe SET {tool} = ? WHERE id = ?"
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(query, (results, id))
+        conn.commit()
+        conn.close()
+
+    def save_burp_scan_results(self, code_id: int, burp_json: str):
+        if not burp_json:
+            return
+        results = json.loads(burp_json)
+        if not results:          # boş liste → detay kaydı yok
+            return
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        for r in results:
+            cursor.execute("""
+                INSERT INTO burp_scan_result
+                    (code_id, scan_id, scan_type, issue_name, type_index,
+                    mapped_cwe, severity, confidence, path, origin)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+            code_id,
+            r.get("scan_id"),
+            r.get("scan_type"),
+            r.get("issue_name"),
+            r.get("type_index"),
+            r.get("mapped_cwe"),
+            r.get("severity"),
+            r.get("confidence"),
+            r.get("path"),
+            r.get("origin"),
+        ))
         conn.commit()
         conn.close()
     
@@ -183,19 +232,23 @@ class DBManager:
         return successful
 
     def fetch_dast_data_by_id(self, code_id):
-
+        """
+        Returns (id, owasp_zap, burpsuite) for the given code_id.
+        burpsuite kolonu "found" / "not-found" / None değerlerini taşır.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-
-        query = """
-        SELECT id, owasp_zap
-        FROM code_cwe
-        WHERE id = ?
-        """
+        # burpsuite kolonu yoksa hata vermemesi için PRAGMA ile kontrol et
+        cursor.execute("PRAGMA table_info(code_cwe)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if "burpsuite" in cols:
+            query = "SELECT id, owasp_zap, burpsuite FROM code_cwe WHERE id = ?"
+        else:
+            query = "SELECT id, owasp_zap, NULL FROM code_cwe WHERE id = ?"
         cursor.execute(query, (code_id,))
         result = cursor.fetchone()
         conn.close()
-        return result
+        return result   # (id, owasp_zap, burpsuite)
 
 
     def fetch_sast_data_by_id(self, code_id, sast_tool_columns=None):
@@ -217,6 +270,7 @@ class DBManager:
         result = cursor.fetchone()
         conn.close()
         return result
+
     # Mid project i changed how i save secure/vulnerable info.
     # So this function will normalize the old and new values to boolean
     def is_secure_by_id(self, code_id: int) -> bool:
@@ -256,6 +310,18 @@ class DBManager:
         result = cursor.fetchone()
         conn.close()
         return result[0] if result else None  # to get strip tuple error
+    
+    def get_docker_info_by_cwe(self, cwe_id):
+        #* it will work for burpsuite so no reason to make docker status dynamic
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        query = """
+        SELECT id, port 
+        FROM code_cwe 
+        WHERE CWE = ? AND docker = 'tested-successful'"""
+        cursor.execute(query, (cwe_id,)
+        )
+        return cursor.fetchall()
 
     def get_all(self, code_id):
         conn = sqlite3.connect(self.db_path)

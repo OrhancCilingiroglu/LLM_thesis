@@ -12,13 +12,43 @@ import traceback
 import json
 from typing import Callable, Optional, Sequence, Tuple
 from core import api_handler, db_handler, docker_handler, file_handler
+from utils import message_parsers
 
 load_dotenv()
 
 db = db_handler.DBManager()
 fm = file_handler.FileManager()
 zap_key = os.getenv("owasp_zap_api_key")
+
+#! CONFIGS
+
 zappolicy = "API"
+
+BURP_API_URL = "http://127.0.0.1:1337"
+BURP_SCAN_CONFIGS = {
+    "crawl_and_audit": [
+        {"name": "Crawl strategy - fastest", "type": "NamedConfiguration"},
+        {"name": "Audit checks - all except time-based detection methods", "type": "NamedConfiguration"}
+    ],
+    "active_scan": [
+        {"name": "Audit checks - all except time-based detection methods", "type": "NamedConfiguration"}
+    ],
+    "passive_scan": [
+        {"name": "Crawl strategy - fastest", "type": "NamedConfiguration"}
+    ],
+    "os_command_injection": [
+        {"name": "Crawl strategy - fastest", "type": "NamedConfiguration"},
+        {
+            "type": "CustomConfiguration",
+            "config": {
+                "audit_optimization": {
+                    "issue_types": [1048832]   # OS Command Injection for CWE-77 and CWE-78
+                }
+            }
+        }
+    ],
+}
+
 
 def setup_env(id):
     db = db_handler.DBManager()
@@ -90,8 +120,114 @@ def nikto_scan(targetport, outputname):
     subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print(f"[+] Scan complete. Output saved to {output_file}")
 
+def burp_scan(port, config_name):
+    target = f"http://localhost:{port}"
+    
+    scan_payload = {
+        "urls": [target],
+        "scan_configurations": [
+            {
+                "type": "NamedConfiguration",
+                "name": config_name   # Configuration Library'deki isim
+            }
+        ],
+        "scope": {
+            "include": [{"rule": target, "type": "PrefixMatch"}],
+            "type": "SimpleScope"
+        }
+    }
+
+    response = requests.post(
+        f"{BURP_API_URL}/v0.1/scan",
+        headers={"Content-Type": "application/json"},
+        json=scan_payload
+    )
+
+    if response.status_code != 201:
+        raise Exception(f"Burp scan didnt start: {response.status_code}")
+
+    scan_id = response.headers.get("Location", "").strip("/").split("/")[-1]
+    print(f"[+] Burp scan started → scan_id={scan_id}, config={config_name}, target={target}")
+
+    paused_count = 0
+    while True:
+        status_resp = requests.get(f"{BURP_API_URL}/v0.1/scan/{scan_id}")
+        data = status_resp.json()
+        status = data.get("scan_status")
+        issue_count = len(data.get("issue_events", []))
+        print(f"    Burp scan status: {status} | found issue: {issue_count}")
+
+        if status == "succeeded":
+            break
+        if status == "failed":
+            raise Exception(f"Burp scan fail: scan_id={scan_id}")
+        if status == "paused":
+            paused_count += 1
+            if paused_count >= 3:
+                print(f"SKIP: Burp scan paused, container erişilemiyor port={port}")
+                return None, []
+
+        time.sleep(5)
+
+    return scan_id, data.get("issue_events", [])
 def build_and_burp(id):
-    return None    
+    code, dockerfile, sql_script, port, reqs, docker = db.get_files_by_id(id)
+
+    if docker != "tested-successful":
+        print(f"SKIP BURP: code_id={id} docker status: {docker}")
+        return None
+
+    try:
+        cwe_key = db.get_CWE_by_id(id) or "default"
+        config_name = message_parsers.CWE_TO_BURP_CONFIG.get(cwe_key, message_parsers.CWE_TO_BURP_CONFIG["default"])
+        print(f"    CWE: {cwe_key} → Config: {config_name}")
+
+        workdir = fm.setup_files(id, code, dockerfile, sql_script, reqs)
+        fm.run_sql_script(id, sql_script)
+        dm = docker_handler.DockerManager(workdir=workdir, tag=id, port=port)
+        dm.build_image()
+        dm.run_container()
+
+        scan_id, issue_events = burp_scan(port, config_name)
+
+        if scan_id is None:
+            dm.stop_and_remove()
+            fm.remove_files(workdir)
+            return None
+
+        results = []
+        for event in issue_events:
+            if event.get("type") != "issue_found":
+                continue
+            issue = event["issue"]
+            mapped_cwe = message_parsers.BURP_TYPE_TO_CWE.get(issue.get("type_index"))
+            if mapped_cwe is None:
+                continue
+            results.append({
+                "scan_id":    scan_id,
+                "scan_type":  config_name,
+                "issue_name": issue.get("name"),
+                "type_index": issue.get("type_index"),
+                "mapped_cwe": mapped_cwe,
+                "severity":   issue.get("severity"),
+                "confidence": issue.get("confidence"),
+                "path":       issue.get("path"),
+                "origin":     issue.get("origin"),
+            })
+
+        dm.stop_and_remove()
+        fm.remove_files(workdir)
+        return json.dumps(results, ensure_ascii=False)
+
+    except Exception as e:
+        traceback.print_exc()
+        print(f"FAIL: code_id={id} burp error: {e}")
+        try:
+            dm.stop_and_remove()
+            fm.remove_files(workdir)
+        except:
+            pass
+        return None
     
 def build_and_nikto(id):
     return None
@@ -105,6 +241,7 @@ def dast_scan(
     *,
     start_id: int,
     end_id: int,
+    id_list: list = None,
     save_result: SaveFn,
     run_zap:   bool = True,
     run_nikto: bool = True,
@@ -120,7 +257,16 @@ def dast_scan(
     nikto_pending  = set(not_tested_map.get("nicto", []))
     burp_pending   = set(not_tested_map.get("burpsuite", []))
 
-    for code_id in range(start_id, end_id + 1):
+    # determine ids for scanning
+    if id_list is not None:
+        code_ids = id_list
+    elif start_id is not None and end_id is not None:
+        code_ids = range(start_id, end_id + 1)
+    else:
+        raise ValueError("start_id/end_id veya id_list verilmeli")
+
+
+    for code_id in code_ids:
 
         if run_zap and code_id in zap_pending:
             o = build_and_zap(code_id, zappolicy)
@@ -134,7 +280,8 @@ def dast_scan(
             if s is not None:
                 save_result(code_id, "nicto", s)
 
-        if run_burp and code_id in burp_pending:
+        #if run_burp and code_id in burp_pending:
+        if run_burp:
             q = build_and_burp(code_id)
             if q is not None:
                 save_result(code_id, "burpsuite", q)

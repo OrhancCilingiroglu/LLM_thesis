@@ -30,27 +30,31 @@ Valid results — Secure: 1007 | Vulnerable: 1722
 
 PARTIAL MATCH breakdown:
   - SAST_ONLY: 211 (87.19% of partial)
-  - ZAP_ONLY: 31 (12.81% of partial)
+  - DAST_ONLY: 31 (12.81% of partial)
 
 ================================================================================
 TOOL DETECTION CONTRIBUTION (vulnerable rows only)
 ================================================================================
 Counts how many times each tool independently detected the expected CWE.
 One row can be counted by multiple tools if they all found it.
+BurpSuite: 'found' in code_cwe.burpsuite column counts as DAST detection.
 
-  - bandit         :   170 detections  (52.15% of all tool hits)
-  - semgrep        :   110 detections  (33.74% of all tool hits)
-  - owasp_zap      :    46 detections  (14.11% of all tool hits)
+  - bandit         :   170 detections  (50.60% of all tool hits)
+  - semgrep        :   110 detections  (32.74% of all tool hits)
+  - owasp_zap      :    46 detections  (13.69% of all tool hits)
+  - burpsuite      :    10 detections  (2.98% of all tool hits)
 
-  Total tool hits (sum across tools) : 326
+  Total tool hits (sum across tools) : 336
   Unique vulnerable rows analyzed    : 1722
 
 ================================================================================
 OWASP CATEGORY SUMMARY
 ================================================================================
 
-[A05_2025_Injection] docker tested-successful count: 1363
-  Valid analyzed: 1360
+[A05_2025_Injection]
+  Total Rows                                 : 1363
+  Vulnerable Rows | Docker runnable rows     : 908 | 908
+  Secure Rows     | Docker runnable rows     : 455 | 452
   Correlation distribution:
     - NO MATCH: 1082 (79.56%)
     - PARTIAL MATCH: 143 (10.51%)
@@ -58,121 +62,117 @@ OWASP CATEGORY SUMMARY
     - FULL MATCH: 23 (1.69%)
   Partial breakdown:
     - SAST_ONLY: 131 (91.61% of partial)
-    - ZAP_ONLY: 12 (8.39% of partial)
+    - DAST_ONLY: 12 (8.39% of partial)
   CWEs with at least one detection (partial or full): 27
-    CWE-103, CWE-104, CWE-112, CWE-116, CWE-20, CWE-470, CWE-493, CWE-500, CWE-564, CWE-610, CWE-643, CWE-74, CWE-77, CWE-78, CWE-79, CWE-83, CWE-88, CWE-89, CWE-90, CWE-91, CWE-93, CWE-94, CWE-95, CWE-96, CWE-97, CWE-98, CWE-99
+    CWE-20, CWE-74, CWE-77, CWE-78, CWE-79, CWE-83, CWE-88, CWE-89, CWE-90, CWE-91, CWE-93, CWE-94, CWE-95, CWE-96, CWE-97, CWE-98, CWE-99, CWE-103, CWE-104, CWE-112, CWE-116, CWE-470, CWE-493, CWE-500, CWE-564, CWE-610, CWE-643
   CWE breakdown:
-    - CWE-90 | Secure     | total=26 | tested-secure=26, vulnerable=0
-    - CWE-90 | Vulnerable | total=38 | FULL=0 PARTIAL=3 TOOL_NOT_DB=5 NO=30
-    - CWE-91 | Secure     | total=23 | tested-secure=23, vulnerable=0
-    - CWE-91 | Vulnerable | total=37 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=30
     - CWE-20 | Secure     | total=23 | tested-secure=18, vulnerable=5
     - CWE-20 | Vulnerable | total=34 | FULL=0 PARTIAL=2 TOOL_NOT_DB=5 NO=27
+    - CWE-74 | Secure     | total=9 | tested-secure=9, vulnerable=0
+    - CWE-74 | Vulnerable | total=25 | FULL=0 PARTIAL=1 TOOL_NOT_DB=3 NO=21
+    - CWE-76 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-76 | Vulnerable | total=19 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=18
+    - CWE-77 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-77 | Vulnerable | total=31 | FULL=0 PARTIAL=4 TOOL_NOT_DB=8 NO=19
+    - CWE-78 | Secure     | total=4 | tested-secure=4, vulnerable=0
+    - CWE-78 | Vulnerable | total=27 | FULL=6 PARTIAL=7 TOOL_NOT_DB=4 NO=10
+    - CWE-79 | Secure     | total=10 | tested-secure=8, vulnerable=2
+    - CWE-79 | Vulnerable | total=26 | FULL=1 PARTIAL=9 TOOL_NOT_DB=2 NO=14
+    - CWE-80 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-80 | Vulnerable | total=21 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=21
+    - CWE-83 | Secure     | total=11 | tested-secure=10, vulnerable=1
+    - CWE-83 | Vulnerable | total=25 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=18
+    - CWE-86 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-86 | Vulnerable | total=14 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=13
     - CWE-88 | Secure     | total=20 | tested-secure=20, vulnerable=0
     - CWE-88 | Vulnerable | total=36 | FULL=0 PARTIAL=6 TOOL_NOT_DB=11 NO=19
     - CWE-89 | Secure     | total=20 | tested-secure=19, vulnerable=1
     - CWE-89 | Vulnerable | total=35 | FULL=16 PARTIAL=17 TOOL_NOT_DB=0 NO=2
+    - CWE-90 | Secure     | total=26 | tested-secure=26, vulnerable=0
+    - CWE-90 | Vulnerable | total=38 | FULL=0 PARTIAL=3 TOOL_NOT_DB=5 NO=30
+    - CWE-91 | Secure     | total=23 | tested-secure=23, vulnerable=0
+    - CWE-91 | Vulnerable | total=37 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=30
     - CWE-93 | Secure     | total=21 | tested-secure=21, vulnerable=0
     - CWE-93 | Vulnerable | total=33 | FULL=0 PARTIAL=8 TOOL_NOT_DB=4 NO=21
     - CWE-94 | Secure     | total=18 | tested-secure=18, vulnerable=0
     - CWE-94 | Vulnerable | total=34 | FULL=0 PARTIAL=24 TOOL_NOT_DB=3 NO=7
-    - CWE-104 | Secure     | total=19 | tested-secure=19, vulnerable=0
-    - CWE-104 | Vulnerable | total=24 | FULL=0 PARTIAL=1 TOOL_NOT_DB=11 NO=12
     - CWE-95 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-95 | Vulnerable | total=33 | FULL=0 PARTIAL=16 TOOL_NOT_DB=5 NO=12
-    - CWE-77 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-77 | Vulnerable | total=31 | FULL=0 PARTIAL=4 TOOL_NOT_DB=8 NO=19
-    - CWE-103 | Secure     | total=19 | tested-secure=19, vulnerable=0
-    - CWE-103 | Vulnerable | total=19 | FULL=0 PARTIAL=1 TOOL_NOT_DB=4 NO=14
-    - CWE-112 | Secure     | total=18 | tested-secure=18, vulnerable=0
-    - CWE-112 | Vulnerable | total=20 | FULL=0 PARTIAL=7 TOOL_NOT_DB=3 NO=10
-    - CWE-79 | Secure     | total=10 | tested-secure=8, vulnerable=2
-    - CWE-79 | Vulnerable | total=26 | FULL=1 PARTIAL=9 TOOL_NOT_DB=2 NO=14
-    - CWE-83 | Secure     | total=11 | tested-secure=10, vulnerable=1
-    - CWE-83 | Vulnerable | total=25 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=18
     - CWE-96 | Secure     | total=11 | tested-secure=11, vulnerable=0
     - CWE-96 | Vulnerable | total=25 | FULL=0 PARTIAL=4 TOOL_NOT_DB=1 NO=20
-    - CWE-113 | Secure     | total=12 | tested-secure=12, vulnerable=0
-    - CWE-113 | Vulnerable | total=23 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=22
-    - CWE-74 | Secure     | total=9 | tested-secure=9, vulnerable=0
-    - CWE-74 | Vulnerable | total=25 | FULL=0 PARTIAL=1 TOOL_NOT_DB=3 NO=21
-    - CWE-159 | Secure     | total=13 | tested-secure=13, vulnerable=0
-    - CWE-159 | Vulnerable | total=21 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=21
-    - CWE-98 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-98 | Vulnerable | total=23 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=20
     - CWE-97 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-97 | Vulnerable | total=23 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=20
+    - CWE-98 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-98 | Vulnerable | total=23 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=20
     - CWE-99 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-99 | Vulnerable | total=23 | FULL=0 PARTIAL=2 TOOL_NOT_DB=5 NO=16
-    - CWE-116 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-116 | Vulnerable | total=24 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=21
+    - CWE-103 | Secure     | total=19 | tested-secure=19, vulnerable=0
+    - CWE-103 | Vulnerable | total=19 | FULL=0 PARTIAL=1 TOOL_NOT_DB=4 NO=14
+    - CWE-104 | Secure     | total=19 | tested-secure=19, vulnerable=0
+    - CWE-104 | Vulnerable | total=24 | FULL=0 PARTIAL=1 TOOL_NOT_DB=11 NO=12
+    - CWE-112 | Secure     | total=18 | tested-secure=18, vulnerable=0
+    - CWE-112 | Vulnerable | total=20 | FULL=0 PARTIAL=7 TOOL_NOT_DB=3 NO=10
+    - CWE-113 | Secure     | total=12 | tested-secure=12, vulnerable=0
+    - CWE-113 | Vulnerable | total=23 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=22
+    - CWE-114 | Secure     | total=12 | tested-secure=12, vulnerable=0
+    - CWE-114 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=10
     - CWE-115 | Secure     | total=14 | tested-secure=14, vulnerable=0
     - CWE-115 | Vulnerable | total=18 | FULL=0 PARTIAL=0 TOOL_NOT_DB=3 NO=15
+    - CWE-116 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-116 | Vulnerable | total=24 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=21
     - CWE-129 | Secure     | total=13 | tested-secure=13, vulnerable=0
     - CWE-129 | Vulnerable | total=19 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=18
-    - CWE-78 | Secure     | total=4 | tested-secure=4, vulnerable=0
-    - CWE-78 | Vulnerable | total=27 | FULL=6 PARTIAL=7 TOOL_NOT_DB=4 NO=10
+    - CWE-159 | Secure     | total=13 | tested-secure=13, vulnerable=0
+    - CWE-159 | Vulnerable | total=21 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=21
+    - CWE-470 | Secure     | total=6 | tested-secure=6, vulnerable=0
+    - CWE-470 | Vulnerable | total=18 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=16
+    - CWE-493 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-493 | Vulnerable | total=18 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=16
+    - CWE-500 | Secure     | total=9 | tested-secure=9, vulnerable=0
+    - CWE-500 | Vulnerable | total=13 | FULL=0 PARTIAL=1 TOOL_NOT_DB=1 NO=11
+    - CWE-564 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-564 | Vulnerable | total=21 | FULL=0 PARTIAL=1 TOOL_NOT_DB=4 NO=16
     - CWE-610 | Secure     | total=5 | tested-secure=5, vulnerable=0
     - CWE-610 | Vulnerable | total=26 | FULL=0 PARTIAL=2 TOOL_NOT_DB=5 NO=19
     - CWE-643 | Secure     | total=7 | tested-secure=6, vulnerable=1
     - CWE-643 | Vulnerable | total=24 | FULL=0 PARTIAL=5 TOOL_NOT_DB=1 NO=18
-    - CWE-917 | Secure     | total=5 | tested-secure=5, vulnerable=0
-    - CWE-917 | Vulnerable | total=26 | FULL=0 PARTIAL=0 TOOL_NOT_DB=3 NO=23
-    - CWE-80 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-80 | Vulnerable | total=21 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=21
-    - CWE-564 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-564 | Vulnerable | total=21 | FULL=0 PARTIAL=1 TOOL_NOT_DB=4 NO=16
-    - CWE-493 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-493 | Vulnerable | total=18 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=16
-    - CWE-76 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-76 | Vulnerable | total=19 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=18
     - CWE-644 | Secure     | total=5 | tested-secure=5, vulnerable=0
     - CWE-644 | Vulnerable | total=20 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=20
-    - CWE-86 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-86 | Vulnerable | total=14 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=13
-    - CWE-470 | Secure     | total=6 | tested-secure=6, vulnerable=0
-    - CWE-470 | Vulnerable | total=18 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=16
-    - CWE-114 | Secure     | total=12 | tested-secure=12, vulnerable=0
-    - CWE-114 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=10
-    - CWE-500 | Secure     | total=9 | tested-secure=9, vulnerable=0
-    - CWE-500 | Vulnerable | total=13 | FULL=0 PARTIAL=1 TOOL_NOT_DB=1 NO=11
+    - CWE-917 | Secure     | total=5 | tested-secure=5, vulnerable=0
+    - CWE-917 | Vulnerable | total=26 | FULL=0 PARTIAL=0 TOOL_NOT_DB=3 NO=23
 
-[A01_2025_Broken_Access_Control] docker tested-successful count: 774
-  Valid analyzed: 774
+[A01_2025_Broken_Access_Control]
+  Total Rows                                 : 774
+  Vulnerable Rows | Docker runnable rows     : 433 | 433
+  Secure Rows     | Docker runnable rows     : 341 | 341
   Correlation distribution:
     - NO MATCH: 698 (90.18%)
     - PARTIAL MATCH: 57 (7.36%)
     - TOOL MATCH BUT NOT DB: 19 (2.45%)
   Partial breakdown:
     - SAST_ONLY: 41 (71.93% of partial)
-    - ZAP_ONLY: 16 (28.07% of partial)
+    - DAST_ONLY: 16 (28.07% of partial)
   CWEs with at least one detection (partial or full): 17
-    CWE-1275, CWE-219, CWE-22, CWE-23, CWE-275, CWE-276, CWE-285, CWE-352, CWE-377, CWE-538, CWE-540, CWE-548, CWE-59, CWE-601, CWE-668, CWE-862, CWE-922
+    CWE-22, CWE-23, CWE-59, CWE-219, CWE-275, CWE-276, CWE-285, CWE-352, CWE-377, CWE-538, CWE-540, CWE-548, CWE-601, CWE-668, CWE-862, CWE-922, CWE-1275
   CWE breakdown:
-    - CWE-35 | Secure     | total=12 | tested-secure=12, vulnerable=0
-    - CWE-35 | Vulnerable | total=15 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=15
-    - CWE-566 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-566 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=16
-    - CWE-402 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-402 | Vulnerable | total=16 | FULL=0 PARTIAL=0 TOOL_NOT_DB=3 NO=13
-    - CWE-601 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-601 | Vulnerable | total=16 | FULL=0 PARTIAL=6 TOOL_NOT_DB=0 NO=10
-    - CWE-668 | Secure     | total=11 | tested-secure=6, vulnerable=5
-    - CWE-668 | Vulnerable | total=15 | FULL=0 PARTIAL=6 TOOL_NOT_DB=0 NO=9
-    - CWE-913 | Secure     | total=9 | tested-secure=9, vulnerable=0
-    - CWE-913 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=16
     - CWE-22 | Secure     | total=12 | tested-secure=12, vulnerable=0
     - CWE-22 | Vulnerable | total=13 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=10
+    - CWE-23 | Secure     | total=8 | tested-secure=8, vulnerable=0
+    - CWE-23 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=9
+    - CWE-35 | Secure     | total=12 | tested-secure=12, vulnerable=0
+    - CWE-35 | Vulnerable | total=15 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=15
+    - CWE-59 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-59 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=1 NO=10
     - CWE-200 | Secure     | total=12 | tested-secure=12, vulnerable=0
     - CWE-200 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=11
-    - CWE-377 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-377 | Vulnerable | total=15 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=14
-    - CWE-425 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-425 | Vulnerable | total=14 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=14
-    - CWE-922 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-922 | Vulnerable | total=14 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=12
+    - CWE-201 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-201 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=12
+    - CWE-219 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-219 | Vulnerable | total=9 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=6
     - CWE-264 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-264 | Vulnerable | total=15 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=14
+    - CWE-275 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-275 | Vulnerable | total=10 | FULL=0 PARTIAL=4 TOOL_NOT_DB=0 NO=6
     - CWE-276 | Secure     | total=10 | tested-secure=7, vulnerable=3
     - CWE-276 | Vulnerable | total=14 | FULL=0 PARTIAL=8 TOOL_NOT_DB=0 NO=6
     - CWE-284 | Secure     | total=9 | tested-secure=9, vulnerable=0
@@ -181,43 +181,51 @@ OWASP CATEGORY SUMMARY
     - CWE-285 | Vulnerable | total=15 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=13
     - CWE-352 | Secure     | total=11 | tested-secure=10, vulnerable=1
     - CWE-352 | Vulnerable | total=13 | FULL=0 PARTIAL=6 TOOL_NOT_DB=0 NO=7
-    - CWE-863 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-863 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=13
-    - CWE-59 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-59 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=1 NO=10
-    - CWE-201 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-201 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=12
+    - CWE-359 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-359 | Vulnerable | total=10 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=10
+    - CWE-377 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-377 | Vulnerable | total=15 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=14
+    - CWE-402 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-402 | Vulnerable | total=16 | FULL=0 PARTIAL=0 TOOL_NOT_DB=3 NO=13
+    - CWE-425 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-425 | Vulnerable | total=14 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=14
+    - CWE-441 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-441 | Vulnerable | total=11 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=11
     - CWE-538 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-538 | Vulnerable | total=14 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=13
+    - CWE-540 | Secure     | total=10 | tested-secure=9, vulnerable=1
+    - CWE-540 | Vulnerable | total=9 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=8
     - CWE-548 | Secure     | total=11 | tested-secure=10, vulnerable=1
     - CWE-548 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=12
     - CWE-552 | Secure     | total=10 | tested-secure=10, vulnerable=0
     - CWE-552 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=11
+    - CWE-566 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-566 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=16
+    - CWE-601 | Secure     | total=10 | tested-secure=10, vulnerable=0
+    - CWE-601 | Vulnerable | total=16 | FULL=0 PARTIAL=6 TOOL_NOT_DB=0 NO=10
     - CWE-639 | Secure     | total=11 | tested-secure=11, vulnerable=0
     - CWE-639 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=11
     - CWE-651 | Secure     | total=11 | tested-secure=11, vulnerable=0
     - CWE-651 | Vulnerable | total=12 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=11
+    - CWE-668 | Secure     | total=11 | tested-secure=6, vulnerable=5
+    - CWE-668 | Vulnerable | total=15 | FULL=0 PARTIAL=6 TOOL_NOT_DB=0 NO=9
     - CWE-706 | Secure     | total=11 | tested-secure=11, vulnerable=0
     - CWE-706 | Vulnerable | total=11 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=11
     - CWE-862 | Secure     | total=10 | tested-secure=10, vulnerable=0
     - CWE-862 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=11
+    - CWE-863 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-863 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=13
+    - CWE-913 | Secure     | total=9 | tested-secure=9, vulnerable=0
+    - CWE-913 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=16
+    - CWE-922 | Secure     | total=11 | tested-secure=11, vulnerable=0
+    - CWE-922 | Vulnerable | total=14 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=12
     - CWE-1275 | Secure     | total=10 | tested-secure=8, vulnerable=2
     - CWE-1275 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=1 NO=10
-    - CWE-275 | Secure     | total=11 | tested-secure=11, vulnerable=0
-    - CWE-275 | Vulnerable | total=10 | FULL=0 PARTIAL=4 TOOL_NOT_DB=0 NO=6
-    - CWE-441 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-441 | Vulnerable | total=11 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=11
-    - CWE-23 | Secure     | total=8 | tested-secure=8, vulnerable=0
-    - CWE-23 | Vulnerable | total=12 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=9
-    - CWE-359 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-359 | Vulnerable | total=10 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=10
-    - CWE-219 | Secure     | total=10 | tested-secure=10, vulnerable=0
-    - CWE-219 | Vulnerable | total=9 | FULL=0 PARTIAL=2 TOOL_NOT_DB=1 NO=6
-    - CWE-540 | Secure     | total=10 | tested-secure=9, vulnerable=1
-    - CWE-540 | Vulnerable | total=9 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=8
 
-[UNMAPPED] docker tested-successful count: 200
-  Valid analyzed: 200
+[UNMAPPED]
+  Total Rows                                 : 200
+  Vulnerable Rows | Docker runnable rows     : 143 | 143
+  Secure Rows     | Docker runnable rows     : 57 | 57
   Correlation distribution:
     - NO MATCH: 166 (83.00%)
     - TOOL MATCH BUT NOT DB: 23 (11.50%)
@@ -225,112 +233,116 @@ OWASP CATEGORY SUMMARY
   Partial breakdown:
     - SAST_ONLY: 11 (100.00% of partial)
   CWEs with at least one detection (partial or full): 6
-    CWE-100, CWE-138, CWE-213, CWE-471, CWE-75, CWE-87
+    CWE-75, CWE-87, CWE-100, CWE-138, CWE-213, CWE-471
   CWE breakdown:
+    - CWE-75 | Vulnerable | total=19 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=16
     - CWE-87 | Secure     | total=22 | tested-secure=22, vulnerable=0
     - CWE-87 | Vulnerable | total=31 | FULL=0 PARTIAL=2 TOOL_NOT_DB=9 NO=20
     - CWE-100 | Secure     | total=9 | tested-secure=9, vulnerable=0
     - CWE-100 | Vulnerable | total=17 | FULL=0 PARTIAL=3 TOOL_NOT_DB=3 NO=11
-    - CWE-184 | Secure     | total=7 | tested-secure=7, vulnerable=0
-    - CWE-184 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=15
     - CWE-138 | Secure     | total=7 | tested-secure=7, vulnerable=0
     - CWE-138 | Vulnerable | total=15 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=14
-    - CWE-75 | Vulnerable | total=19 | FULL=0 PARTIAL=1 TOOL_NOT_DB=2 NO=16
-    - CWE-471 | Vulnerable | total=16 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=9
-    - CWE-652 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=11
-    - CWE-257 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-257 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-184 | Secure     | total=7 | tested-secure=7, vulnerable=0
+    - CWE-184 | Vulnerable | total=17 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=15
     - CWE-213 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-213 | Vulnerable | total=3 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=2
-    - CWE-927 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-927 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-255 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-257 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-257 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
     - CWE-430 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-430 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-255 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-1216 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-1216 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-471 | Vulnerable | total=16 | FULL=0 PARTIAL=3 TOOL_NOT_DB=4 NO=9
+    - CWE-579 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-646 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-646 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=0
     - CWE-650 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-650 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-579 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-652 | Vulnerable | total=13 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=11
     - CWE-840 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-927 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-927 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-1216 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-1216 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
 
-[A06_2025_Insecure_Design] docker tested-successful count: 122
-  Valid analyzed: 122
+[A06_2025_Insecure_Design]
+  Total Rows                                 : 122
+  Vulnerable Rows | Docker runnable rows     : 72 | 72
+  Secure Rows     | Docker runnable rows     : 50 | 50
   Correlation distribution:
     - NO MATCH: 115 (94.26%)
     - TOOL MATCH BUT NOT DB: 3 (2.46%)
     - PARTIAL MATCH: 3 (2.46%)
     - FULL MATCH: 1 (0.82%)
   Partial breakdown:
-    - ZAP_ONLY: 2 (66.67% of partial)
+    - DAST_ONLY: 2 (66.67% of partial)
     - SAST_ONLY: 1 (33.33% of partial)
   CWEs with at least one detection (partial or full): 3
-    CWE-1021, CWE-256, CWE-693
+    CWE-256, CWE-693, CWE-1021
   CWE breakdown:
-    - CWE-316 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-316 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=3
-    - CWE-419 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-419 | Vulnerable | total=5 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=5
-    - CWE-434 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-434 | Vulnerable | total=5 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=5
-    - CWE-444 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-444 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
-    - CWE-312 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-312 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
     - CWE-73 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-73 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
     - CWE-183 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-183 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=2 NO=2
     - CWE-256 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-256 | Vulnerable | total=3 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=2
-    - CWE-313 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-313 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-451 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-451 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-472 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-472 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-598 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-598 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-266 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-266 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-269 | Secure     | total=3 | tested-secure=3, vulnerable=0
     - CWE-269 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-286 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-311 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-311 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-312 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-312 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
+    - CWE-313 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-313 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-316 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-316 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=3
+    - CWE-362 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-382 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-419 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-419 | Vulnerable | total=5 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=5
+    - CWE-434 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-434 | Vulnerable | total=5 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=5
+    - CWE-444 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-444 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
+    - CWE-451 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-451 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-472 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-472 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-501 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-501 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-522 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-522 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-525 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-525 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-311 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-311 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-642 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-642 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-1021 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-1021 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
-    - CWE-657 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-657 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-539 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-653 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-799 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-841 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-841 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-286 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-693 | Secure     | total=1 | tested-secure=0, vulnerable=1
-    - CWE-693 | Vulnerable | total=1 | FULL=1 PARTIAL=0 TOOL_NOT_DB=0 NO=0
-    - CWE-656 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-807 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-362 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-382 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-598 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-598 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-602 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-628 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-642 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-642 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-653 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-656 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-657 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-657 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-676 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-693 | Secure     | total=1 | tested-secure=0, vulnerable=1
+    - CWE-693 | Vulnerable | total=1 | FULL=1 PARTIAL=0 TOOL_NOT_DB=0 NO=0
+    - CWE-799 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-807 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-841 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-841 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-1021 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-1021 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-1022 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-1125 | Secure     | total=1 | tested-secure=1, vulnerable=0
 
-[A07_2025_Authentication_Failures] docker tested-successful count: 118
-  Valid analyzed: 118
+[A07_2025_Authentication_Failures]
+  Total Rows                                 : 118
+  Vulnerable Rows | Docker runnable rows     : 74 | 74
+  Secure Rows     | Docker runnable rows     : 44 | 44
   Correlation distribution:
     - NO MATCH: 105 (88.98%)
     - PARTIAL MATCH: 11 (9.32%)
@@ -340,66 +352,68 @@ OWASP CATEGORY SUMMARY
   CWEs with at least one detection (partial or full): 8
     CWE-259, CWE-295, CWE-307, CWE-346, CWE-521, CWE-613, CWE-798, CWE-940
   CWE breakdown:
-    - CWE-521 | Secure     | total=4 | tested-secure=4, vulnerable=0
-    - CWE-521 | Vulnerable | total=4 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=3
-    - CWE-798 | Secure     | total=4 | tested-secure=4, vulnerable=0
-    - CWE-798 | Vulnerable | total=4 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=3
-    - CWE-620 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-620 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=3
-    - CWE-384 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-384 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
-    - CWE-613 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-613 | Vulnerable | total=5 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=4
-    - CWE-640 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-640 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-287 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-287 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-306 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-306 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-288 | Secure     | total=3 | tested-secure=3, vulnerable=0
-    - CWE-288 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-259 | Secure     | total=1 | tested-secure=0, vulnerable=1
     - CWE-259 | Vulnerable | total=3 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=1
+    - CWE-287 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-287 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-288 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-288 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-289 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
     - CWE-290 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-290 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-291 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-293 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-293 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-294 | Secure     | total=2 | tested-secure=2, vulnerable=0
     - CWE-294 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-300 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-300 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-346 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-346 | Vulnerable | total=3 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=2
-    - CWE-940 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-940 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
+    - CWE-295 | Vulnerable | total=2 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=0
     - CWE-297 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-297 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-298 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-299 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-300 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-300 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-302 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-302 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-303 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-303 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-304 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-305 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-306 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-306 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-307 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
     - CWE-308 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-308 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-346 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-346 | Vulnerable | total=3 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=2
+    - CWE-350 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-384 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-384 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=4
+    - CWE-521 | Secure     | total=4 | tested-secure=4, vulnerable=0
+    - CWE-521 | Vulnerable | total=4 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=3
+    - CWE-613 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-613 | Vulnerable | total=5 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=4
+    - CWE-620 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-620 | Vulnerable | total=4 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=3
+    - CWE-640 | Secure     | total=3 | tested-secure=3, vulnerable=0
+    - CWE-640 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-798 | Secure     | total=4 | tested-secure=4, vulnerable=0
+    - CWE-798 | Vulnerable | total=4 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=3
+    - CWE-940 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-940 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
+    - CWE-941 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-1390 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-1390 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-1391 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-1392 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-1392 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-1393 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-1393 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-295 | Vulnerable | total=2 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=0
-    - CWE-302 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-302 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-307 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
-    - CWE-289 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
-    - CWE-293 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-293 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-299 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-1390 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-1390 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-1391 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-291 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-298 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-304 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-305 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-350 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-941 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
 
-[A04_2025_Cryptographic_Failures] docker tested-successful count: 54
-  Valid analyzed: 54
+[A04_2025_Cryptographic_Failures]
+  Total Rows                                 : 54
+  Vulnerable Rows | Docker runnable rows     : 32 | 32
+  Secure Rows     | Docker runnable rows     : 22 | 22
   Correlation distribution:
     - NO MATCH: 43 (79.63%)
     - PARTIAL MATCH: 9 (16.67%)
@@ -409,102 +423,106 @@ OWASP CATEGORY SUMMARY
   CWEs with at least one detection (partial or full): 8
     CWE-319, CWE-320, CWE-327, CWE-329, CWE-330, CWE-334, CWE-335, CWE-916
   CWE breakdown:
-    - CWE-327 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-327 | Vulnerable | total=2 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=0
-    - CWE-328 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-328 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-330 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-330 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
-    - CWE-334 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-334 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
-    - CWE-336 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-336 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-340 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-340 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-759 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-759 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-916 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-916 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
+    - CWE-261 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-296 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-296 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-326 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-326 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=0
-    - CWE-329 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-329 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
-    - CWE-335 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-335 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
-    - CWE-337 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-337 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-342 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-342 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-347 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
-    - CWE-523 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-523 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-1240 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-1240 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-261 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-319 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-320 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-321 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-322 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-325 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-326 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-326 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=0
+    - CWE-327 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-327 | Vulnerable | total=2 | FULL=0 PARTIAL=2 TOOL_NOT_DB=0 NO=0
+    - CWE-328 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-328 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-329 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-329 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
+    - CWE-330 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-330 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
     - CWE-331 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-332 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-334 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-334 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
+    - CWE-335 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-335 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
+    - CWE-336 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-336 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-337 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-337 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-338 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-340 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-340 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-342 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-342 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-347 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
+    - CWE-523 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-523 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-757 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-759 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-759 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-760 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-780 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-916 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-916 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
+    - CWE-1240 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-1240 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
 
-[A10_2025_Mishandling_of_Exceptional_Conditions] docker tested-successful count: 46
-  Valid analyzed: 46
+[A10_2025_Mishandling_of_Exceptional_Conditions]
+  Total Rows                                 : 46
+  Vulnerable Rows | Docker runnable rows     : 25 | 25
+  Secure Rows     | Docker runnable rows     : 21 | 21
   Correlation distribution:
     - NO MATCH: 40 (86.96%)
     - PARTIAL MATCH: 5 (10.87%)
     - TOOL MATCH BUT NOT DB: 1 (2.17%)
   Partial breakdown:
     - SAST_ONLY: 4 (80.00% of partial)
-    - ZAP_ONLY: 1 (20.00% of partial)
+    - DAST_ONLY: 1 (20.00% of partial)
   CWEs with at least one detection (partial or full): 4
     CWE-252, CWE-390, CWE-396, CWE-550
   CWE breakdown:
     - CWE-209 | Secure     | total=3 | tested-secure=3, vulnerable=0
     - CWE-209 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-235 | Secure     | total=2 | tested-secure=2, vulnerable=0
-    - CWE-235 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
-    - CWE-478 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-478 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-636 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-636 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-280 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-234 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-234 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-235 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-235 | Vulnerable | total=3 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=3
+    - CWE-248 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-252 | Secure     | total=1 | tested-secure=0, vulnerable=1
     - CWE-252 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-274 | Secure     | total=2 | tested-secure=2, vulnerable=0
+    - CWE-280 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-369 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-369 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-390 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-390 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
+    - CWE-391 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-394 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-396 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-396 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-397 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-397 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-460 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-460 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-476 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-478 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-478 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-550 | Secure     | total=1 | tested-secure=0, vulnerable=1
     - CWE-550 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-636 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-636 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-703 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-703 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=0
+    - CWE-754 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-755 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-755 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-248 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-391 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-394 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-476 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-754 | Secure     | total=1 | tested-secure=1, vulnerable=0
 
-[A02_2025_Security_Misconfiguration] docker tested-successful count: 24
-  Valid analyzed: 24
+[A02_2025_Security_Misconfiguration]
+  Total Rows                                 : 24
+  Vulnerable Rows | Docker runnable rows     : 16 | 16
+  Secure Rows     | Docker runnable rows     : 8 | 8
   Correlation distribution:
     - NO MATCH: 22 (91.67%)
     - PARTIAL MATCH: 1 (4.17%)
@@ -514,30 +532,32 @@ OWASP CATEGORY SUMMARY
   CWEs with at least one detection (partial or full): 1
     CWE-776
   CWE breakdown:
-    - CWE-260 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-260 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-776 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-776 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
     - CWE-5 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-5 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-11 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-13 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-260 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-260 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-315 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-315 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-489 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-489 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-526 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-526 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-614 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-614 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-1004 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
-    - CWE-11 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-13 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-547 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-611 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-614 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-614 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-776 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-776 | Vulnerable | total=2 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=1
     - CWE-942 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-1004 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=1
     - CWE-1774 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
 
-[A08_2025_Software_or_Data_Integrity_Failures] docker tested-successful count: 17
-  Valid analyzed: 17
+[A08_2025_Software_or_Data_Integrity_Failures]
+  Total Rows                                 : 17
+  Vulnerable Rows | Docker runnable rows     : 13 | 13
+  Secure Rows     | Docker runnable rows     : 4 | 4
   Correlation distribution:
     - NO MATCH: 15 (88.24%)
     - TOOL MATCH BUT NOT DB: 1 (5.88%)
@@ -547,24 +567,26 @@ OWASP CATEGORY SUMMARY
   CWEs with at least one detection (partial or full): 1
     CWE-502
   CWE breakdown:
+    - CWE-345 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-353 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-353 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-426 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-426 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=1 NO=0
+    - CWE-427 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-502 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-509 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
+    - CWE-565 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-784 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-784 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-829 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-830 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-830 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-926 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
-    - CWE-345 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-427 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-502 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
-    - CWE-565 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-829 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
 
-[A03_2025_Sofware_Supply_Chain] docker tested-successful count: 8
-  Valid analyzed: 8
+[A03_2025_Sofware_Supply_Chain]
+  Total Rows                                 : 8
+  Vulnerable Rows | Docker runnable rows     : 3 | 3
+  Secure Rows     | Docker runnable rows     : 5 | 5
   Correlation distribution:
     - NO MATCH: 7 (87.50%)
     - PARTIAL MATCH: 1 (12.50%)
@@ -573,24 +595,26 @@ OWASP CATEGORY SUMMARY
   CWEs with at least one detection (partial or full): 1
     CWE-1035
   CWE breakdown:
-    - CWE-1329 | Secure     | total=1 | tested-secure=1, vulnerable=0
-    - CWE-1329 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-447 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-1035 | Vulnerable | total=1 | FULL=0 PARTIAL=1 TOOL_NOT_DB=0 NO=0
     - CWE-1104 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-1329 | Secure     | total=1 | tested-secure=1, vulnerable=0
+    - CWE-1329 | Vulnerable | total=2 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=2
     - CWE-1357 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-1395 | Secure     | total=1 | tested-secure=1, vulnerable=0
 
-[A09_2025_Security_Logging_and_Alerting_Failures] docker tested-successful count: 6
-  Valid analyzed: 6
+[A09_2025_Security_Logging_and_Alerting_Failures]
+  Total Rows                                 : 6
+  Vulnerable Rows | Docker runnable rows     : 3 | 3
+  Secure Rows     | Docker runnable rows     : 3 | 3
   Correlation distribution:
     - NO MATCH: 6 (100.00%)
   CWEs with at least one detection (partial or full): 0
     - (none detected)
   CWE breakdown:
+    - CWE-117 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
+    - CWE-221 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-223 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-223 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
     - CWE-532 | Secure     | total=1 | tested-secure=1, vulnerable=0
     - CWE-532 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-117 | Vulnerable | total=1 | FULL=0 PARTIAL=0 TOOL_NOT_DB=0 NO=1
-    - CWE-221 | Secure     | total=1 | tested-secure=1, vulnerable=0
