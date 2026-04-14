@@ -24,7 +24,9 @@ def run_bandit_on_code(code):
         fname = tmp.name
     try:
         result = subprocess.run(["bandit", "-r", fname], capture_output=True, text=True)
+        #print(result)
         bandit_result = utils.message_parsers.analyze_static_output(result.stdout)
+        #print(bandit_result)
     except Exception:
         bandit_result = "error"
     #    result ="error"
@@ -294,8 +296,9 @@ SaveFn    = Callable[[int, str, str], None]   # (id, tool, results)
 
 def sast_scan(
     *,
-    start_id: int,
-    end_id: int,
+    start_id: int = None,
+    end_id: int = None,
+    id_list: list = None,
     get_code: GetCodeFn,
     save_result: SaveFn,
     run_bandit: bool = True,
@@ -305,7 +308,6 @@ def sast_scan(
 ) -> None:
     from core import db_handler
     db = db_handler.DBManager()
-
     rules = list(rulesets) if rulesets else default_semgrep_rules()
 
     # pull not-tested ids once, no need to hit db on every iteration
@@ -314,7 +316,13 @@ def sast_scan(
     semgrep_pending = set(not_tested_map.get("semgrep", []))
     sonar_pending   = set(not_tested_map.get("sonarqube", []))
 
-    for code_id in range(start_id, end_id + 1):
+ # if id list exist use that
+    if id_list is not None:
+        code_ids = sorted(id_list)
+    else:
+        code_ids = range(start_id, end_id + 1)
+        
+    for code_id in code_ids:
         # skip if none of the tools need to run for this id
         needs_any = (
             (run_bandit  and code_id in bandit_pending)  or

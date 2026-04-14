@@ -87,99 +87,168 @@ def test_docker_runs2(first_id=None, last_id=None, max_workers: int = 2):
                 print(f"[DOCKER THREAD ERR] {e}")
 
 
+def _sast_worker(
+    first_id, last_id,
+    run_bandit, run_semgrep, run_sonar,
+    poll_interval: int = 30,
+):
+    """
+    Docker thread'i çalışırken SAST tarafı da bağımsız ilerler.
+    Her poll_interval saniyede bir DB'ye bakıp yeni successful ID'leri tarar.
+    Docker thread bitince docker_done event'i set edilir, o tur biter ve çıkar.
+    """
+    sast_tools  = ["bandit", "semgrep", "sonarqube"]
+    scanned_ids = set()   # bu oturumda zaten tarananları tekrar işleme
+
+    while True:
+        not_tested_map = db.get_not_tested_tools()
+
+        docker_ok = set(
+            i for i in db.get_ids_by_docker_status("tested-successful")
+            if first_id <= i <= last_id
+        )
+
+        needs_sast = set()
+        for tool in sast_tools:
+            needs_sast.update(i for i in not_tested_map.get(tool, []) if i in docker_ok)
+
+        # bu turda taranacak yeni ID'ler
+        to_scan = sorted(needs_sast - scanned_ids)
+
+        if to_scan:
+            print(f"[SAST] {len(to_scan)} yeni ID taranıyor: {to_scan[:5]}{'...' if len(to_scan) > 5 else ''}")
+            sast_pipeline.sast_scan(
+                id_list     = to_scan,
+                get_code    = db.get_code,
+                save_result = db.save_scan_results,
+                run_bandit  = run_bandit,
+                run_semgrep = run_semgrep,
+                run_sonar   = run_sonar,
+            )
+            scanned_ids.update(to_scan)
+        else:
+            print(f"[SAST] Yeni taranacak ID yok, {poll_interval}s bekleniyor...")
+
+        # Docker thread bittiyse bir tur daha yap (son gelen successful'lar için) sonra çık
+        if _docker_done.is_set():
+            # son bir tarama daha
+            not_tested_map = db.get_not_tested_tools()
+            docker_ok = set(
+                i for i in db.get_ids_by_docker_status("tested-successful")
+                if first_id <= i <= last_id
+            )
+            needs_sast = set()
+            for tool in sast_tools:
+                needs_sast.update(i for i in not_tested_map.get(tool, []) if i in docker_ok)
+            final_scan = sorted(needs_sast - scanned_ids)
+            if final_scan:
+                print(f"[SAST] Docker bitti, son {len(final_scan)} ID taranıyor...")
+                sast_pipeline.sast_scan(
+                    id_list     = final_scan,
+                    get_code    = db.get_code,
+                    save_result = db.save_scan_results,
+                    run_bandit  = run_bandit,
+                    run_semgrep = run_semgrep,
+                    run_sonar   = run_sonar,
+                )
+            print("[SAST] Worker tamamlandı.")
+            return
+
+        time.sleep(poll_interval)
+
+
+# Docker thread'in bittiğini SAST worker'a bildiren event
+_docker_done = threading.Event()
+
+
 def run_full_pipeline(
     first_id:    int  = None,
     last_id:     int  = None,
     run_bandit:  bool = True,
     run_semgrep: bool = True,
     run_sonar:   bool = True,
-    run_zap:     bool = True,
+    run_zap:     bool = False,
     run_nikto:   bool = False,
     run_burp:    bool = False,
-    docker_workers: int = 2,
+    docker_workers:  int = 2,
+    sast_poll_interval: int = 30,   # SAST her kaç saniyede bir yeni ID'lere baksın
 ):
-    # fall back to full db range if no ids given
     if first_id is None or last_id is None:
         db_min, db_max = db.get_id_range()
         first_id = first_id if first_id is not None else db_min
         last_id  = last_id  if last_id  is not None else db_max
-        print(f"[INFO] ID range set automatically: {first_id} – {last_id}")
+        print(f"[INFO] ID range otomatik: {first_id} – {last_id}")
 
     print(f"\n{'='*60}")
-    print(f"PIPELINE START  |  range: [{first_id} – {last_id}]")
+    print(f"PIPELINE START  |  [{first_id} – {last_id}]")
     print(f"{'='*60}\n")
 
-    # step 1: only test docker for ids that haven't been tested yet
-    print(f"[STEP 1] Docker tests starting... (workers={docker_workers})")
-    test_docker_runs2(first_id, last_id, max_workers=docker_workers)
-    print("[STEP 1] Docker tests done.\n")
+    _docker_done.clear()
 
-    # step 2: figure out which ids still need sast and/or dast
-    # get_not_tested_tools returns per-tool not-tested id lists
-    not_tested_map = db.get_not_tested_tools()  
-
-    # only care about ids that passed docker and fall in our range
-    docker_ok = db.get_ids_by_docker_status("tested-successful")
-    docker_ok = set(i for i in docker_ok if first_id <= i <= last_id)
-
-    # ids that need sast = docker ok AND at least one sast tool not yet run
-    sast_tools   = ["bandit", "semgrep", "sonarqube"]
-    dast_tools   = ["owasp_zap", "nicto", "burpsuite"]
-
-    needs_sast = set()
-    for tool in sast_tools:
-        needs_sast.update(i for i in not_tested_map.get(tool, []) if i in docker_ok)
-
-    needs_dast = set()
-    for tool in dast_tools:
-        needs_dast.update(i for i in not_tested_map.get(tool, []) if i in docker_ok)
-
-    print(f"[INFO] {len(needs_sast)} ID(s) need SAST | {len(needs_dast)} ID(s) need DAST")
-
-    if not needs_sast and not needs_dast:
-        print("[!] Everything already scanned. Pipeline stopping.")
-        return
-
-    # run sast and dast in parallel, they don't depend on each other
-    print("[STEP 2] SAST + DAST starting in parallel...")
+    # --- Docker thread ---
+    def _docker_worker():
+        print(f"[DOCKER] Thread başladı, workers={docker_workers}")
+        test_docker_runs2(first_id, last_id, max_workers=docker_workers)
+        print("[DOCKER] Thread tamamlandı.")
+        _docker_done.set()   # SAST worker'a "bitti" sinyali
 
     threads = []
+    t_docker = threading.Thread(target=_docker_worker, name="Docker-Thread")
+    threads.append(("Docker", t_docker))
 
-    if needs_sast:
-        sast_start = min(needs_sast)
-        sast_end   = max(needs_sast)
-        sast_kwargs = dict(
-            start_id    = sast_start,
-            end_id      = sast_end,
-            get_code    = db.get_code,
-            save_result = db.save_scan_results,
-            run_bandit  = run_bandit,
-            run_semgrep = run_semgrep,
-            run_sonar   = run_sonar,
-        )
-        t = threading.Thread(target=sast_pipeline.sast_scan, kwargs=sast_kwargs, name="SAST-Thread")
-        threads.append(("SAST", t))
+    # --- SAST thread (Docker ile paralel) ---
+    t_sast = threading.Thread(
+        target=_sast_worker,
+        kwargs=dict(
+            first_id     = first_id,
+            last_id      = last_id,
+            run_bandit   = run_bandit,
+            run_semgrep  = run_semgrep,
+            run_sonar    = run_sonar,
+            poll_interval= sast_poll_interval,
+        ),
+        name="SAST-Thread",
+    )
+    threads.append(("SAST", t_sast))
 
-    if needs_dast:
-        dast_start = min(needs_dast)
-        dast_end   = max(needs_dast)
-        dast_kwargs = dict(
-            start_id    = dast_start,
-            end_id      = dast_end,
-            save_result = db.save_scan_results,
-            run_zap     = run_zap,
-            run_nikto   = run_nikto,
-            run_burp    = run_burp,
+    # --- DAST thread (sadece mevcut successful'lar, Docker bitince tekrar çağrılabilir) ---
+    sast_tools = ["bandit", "semgrep", "sonarqube"]
+    dast_tools = ["owasp_zap", "nicto", "burpsuite"]
+
+    not_tested_map = db.get_not_tested_tools()
+    docker_ok_now  = set(
+        i for i in db.get_ids_by_docker_status("tested-successful")
+        if first_id <= i <= last_id
+    )
+    needs_dast = set()
+    for tool in dast_tools:
+        needs_dast.update(i for i in not_tested_map.get(tool, []) if i in docker_ok_now)
+
+    if needs_dast and (run_zap or run_nikto or run_burp):
+        dast_id_list = sorted(needs_dast)
+        print(f"[DAST] {len(dast_id_list)} ID taranacak")
+        t_dast = threading.Thread(
+            target=dast_pipeline.dast_scan,
+            kwargs=dict(
+                start_id    = None,
+                end_id      = None,
+                id_list     = dast_id_list,
+                save_result = db.save_scan_results,
+                run_zap     = run_zap,
+                run_nikto   = run_nikto,
+                run_burp    = run_burp,
+            ),
+            name="DAST-Thread",
         )
-        t = threading.Thread(target=dast_pipeline.dast_scan, kwargs=dast_kwargs, name="DAST-Thread")
-        threads.append(("DAST", t))
+        threads.append(("DAST", t_dast))
 
     for name, t in threads:
+        print(f"[START] {name} thread başlatılıyor...")
         t.start()
 
     for name, t in threads:
         t.join()
-        print(f"[STEP 2] {name} done.")
+        print(f"[DONE] {name} thread bitti.")
 
     print(f"\n{'='*60}")
     print(f"PIPELINE COMPLETE")
@@ -202,9 +271,10 @@ def run_scan_loop(interval_seconds: int = 120, **pipeline_kwargs):
 
 
 if __name__ == "__main__":
+
     run_full_pipeline(
-        first_id = 4494,
-        last_id=  4571,
+        #first_id = 4199,
+        #last_id= 9000,
         run_bandit     = True,
         run_semgrep    = True,
         run_sonar      = True,
@@ -215,10 +285,11 @@ if __name__ == "__main__":
     )
 
     #! uncomment to run as a continuous loop alongside the generation script
-    # run_scan_loop(
-    #     interval_seconds = 120,
-    #     run_bandit  = True,
-    #     run_semgrep = True,
-    #     run_sonar   = True,
-    #     run_zap     = True,
-    # )
+    '''
+    run_scan_loop(
+         interval_seconds = 120,
+         run_bandit  = True,
+         run_semgrep = True,
+         run_sonar   = True,
+         run_zap     = True,
+    )'''

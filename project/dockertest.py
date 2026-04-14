@@ -55,17 +55,17 @@ def test_docker_runs(first_id, last_id):
             workdir_temp = fm.setup_files(code_id, code, dockerfile, sql_script, reqs)
 
             # 2) Optional: run SQL script (doesn't have to block docker test)
-            if fm.run_sql_script(code_id, sql_script):
-                print(f"SQL script executed successfully for code_id={code_id}.")
-            else:
-                print(f"SQL script execution failed for code_id={code_id}.")
-                db.mark_sql_failed(code_id)
+            #if fm.run_sql_script(code_id, sql_script):
+                #print(f"SQL script executed successfully for code_id={code_id}.")
+            #else:
+                #print(f"SQL script execution failed for code_id={code_id}.")
+            #    db.mark_sql_failed(code_id)
 
             # 3) Build + run
             dm = DockerManager(workdir=workdir_temp, tag=code_id, port=port_temp)
 
             if not dm.build_image():
-                print(f"DOCKER BUILD FAIL: code_id={code_id} Docker image build failed.")
+                #print(f"DOCKER BUILD FAIL: code_id={code_id} Docker image build failed.")
                 db.mark_docker_tested_failed(code_id)
                 continue
 
@@ -101,4 +101,4 @@ def test_docker_runs(first_id, last_id):
             except Exception:
                 pass
 
-run_docker_id(172)
+test_docker_runs(7000, 9000)

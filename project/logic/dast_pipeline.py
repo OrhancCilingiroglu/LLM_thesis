@@ -63,7 +63,12 @@ def owasp_zap_scan(port, chosenpolicy):
 
     zap = ZAPv2(apikey=zap_key, proxies={'http':'http://127.0.0.1:8080', 'https':'http://127.0.0.1:8080'})
     target = f"http://localhost:{port}"
-    zap.urlopen(target)
+
+    # BUG FIX: redirect loop'u yakala — bazı Flask kodları koşulsuz redirect yapıyor
+    try:
+        zap.urlopen(target)
+    except Exception as e:
+        print(f"WARN: ZAP urlopen failed (likely redirect loop), continuing anyway: {e}")
     time.sleep(3)
 
     scan_id = zap.spider.scan(target)
@@ -89,22 +94,45 @@ def build_and_zap(id, chosenpolicy):
     code, dockerfile, sql_script, port_temp, reqs, docker = db.get_files_by_id(id)
     if docker != "tested-successful":
         print(f"SKIP DAST : code_id = {id} because docker status was {docker}")
-        return("not-tested")
-    else:
+        return None
+
+    alerts = []      # BUG FIX: UnboundLocalError — alerts her zaman tanımlı olsun
+    dm = None
+    workdir_temp = None
+    try:
+        # BUG FIX: 409 Conflict — aynı isimde container kalmış olabilir, önce temizle
         try:
-            workdir_temp = fm.setup_files(id, code, dockerfile, sql_script, reqs)
-            fm.run_sql_script(id, sql_script)
-            dm = docker_handler.DockerManager(workdir=workdir_temp, tag=id, port=port_temp)
-            dm.build_image()
-            dm.run_container()
-            alerts = owasp_zap_scan(port_temp, chosenpolicy)
-            #db.save_scan_results(id, "owasp-zap", alerts)
-            dm.stop_and_remove()
-            fm.remove_files(workdir_temp)
-        except Exception as e:
-            traceback.print_exc()
-            print(f"FAIL: code_id={id} owasp zap error: {e}")
-        return json.dumps(alerts, ensure_ascii=False)
+            stale = docker_handler.DockerManager(workdir=".", tag=id, port=port_temp)
+            stale.stop_and_remove()
+        except Exception:
+            pass
+
+        workdir_temp = fm.setup_files(id, code, dockerfile, sql_script, reqs)
+        fm.run_sql_script(id, sql_script)
+        dm = docker_handler.DockerManager(workdir=workdir_temp, tag=id, port=port_temp)
+        if not dm.build_image():
+            print(f"FAIL: code_id={id} build failed, skipping ZAP")
+            return None
+        if not dm.run_container():
+            print(f"FAIL: code_id={id} container didn't start, skipping ZAP")
+            return None
+        alerts = owasp_zap_scan(port_temp, chosenpolicy)
+    except Exception as e:
+        traceback.print_exc()
+        print(f"FAIL: code_id={id} owasp zap error: {e}")
+    finally:
+        # BUG FIX: cleanup her durumda çalışsın (exception sonrası da)
+        try:
+            if dm:
+                dm.stop_and_remove()
+        except Exception:
+            pass
+        try:
+            if workdir_temp:
+                fm.remove_files(id)
+        except Exception:
+            pass
+    return json.dumps(alerts, ensure_ascii=False)
 
 #nikto kullanacaksan output aldıktan sonraki kısmını da ekle
 def nikto_scan(targetport, outputname):
@@ -178,8 +206,15 @@ def build_and_burp(id):
         return None
 
     try:
-        cwe_key = db.get_CWE_by_id(id) or "default"
-        config_name = message_parsers.CWE_TO_BURP_CONFIG.get(cwe_key, message_parsers.CWE_TO_BURP_CONFIG["default"])
+        cwe_raw = db.get_CWE_by_id(id)
+        if cwe_raw is None:
+            raise ValueError(f"code_id={id} CWE not found")
+        cwe_key = f"CWE-{cwe_raw}"
+        if cwe_key not in message_parsers.CWE_TO_BURP_CONFIG:
+            raise ValueError(f"CWE_TO_BURP_CONFIG '{cwe_key}' not found")
+
+        config_name = message_parsers.CWE_TO_BURP_CONFIG[cwe_key]
+        #!config_name = message_parsers.CWE_TO_BURP_CONFIG['default']
         print(f"    CWE: {cwe_key} → Config: {config_name}")
 
         workdir = fm.setup_files(id, code, dockerfile, sql_script, reqs)
@@ -200,20 +235,21 @@ def build_and_burp(id):
             if event.get("type") != "issue_found":
                 continue
             issue = event["issue"]
-            mapped_cwe = message_parsers.BURP_TYPE_TO_CWE.get(issue.get("type_index"))
-            if mapped_cwe is None:
+            mapped_cwes = message_parsers.BURP_TYPE_TO_CWE.get(issue.get("type_index"))
+            if mapped_cwes is None:
                 continue
-            results.append({
+            for cwe in mapped_cwes:               # her CWE için ayrı kayıt
+                results.append({
                 "scan_id":    scan_id,
                 "scan_type":  config_name,
                 "issue_name": issue.get("name"),
                 "type_index": issue.get("type_index"),
-                "mapped_cwe": mapped_cwe,
+                "mapped_cwe": cwe,            # tek CWE per kayıt
                 "severity":   issue.get("severity"),
                 "confidence": issue.get("confidence"),
                 "path":       issue.get("path"),
                 "origin":     issue.get("origin"),
-            })
+                })
 
         dm.stop_and_remove()
         fm.remove_files(workdir)
@@ -268,12 +304,13 @@ def dast_scan(
 
     for code_id in code_ids:
 
-        if run_zap and code_id in zap_pending:
-            o = build_and_zap(code_id, zappolicy)
-            if o is not None:
-                save_result(code_id, "owasp_zap", o)
-        else:
-            print(f"SKIP ZAP: code_id={code_id} already scanned or not selected")
+        if run_zap:
+            if code_id in zap_pending:
+                o = build_and_zap(code_id, zappolicy)
+                if o is not None:
+                    save_result(code_id, "owasp_zap", o)
+            else:
+                print(f"SKIP ZAP: code_id={code_id} already scanned")
 
         if run_nikto and code_id in nikto_pending:
             s = build_and_nikto(code_id)
@@ -281,7 +318,7 @@ def dast_scan(
                 save_result(code_id, "nicto", s)
 
         #if run_burp and code_id in burp_pending:
-        if run_burp:
+        if run_burp and code_id in burp_pending:
             q = build_and_burp(code_id)
             if q is not None:
                 save_result(code_id, "burpsuite", q)

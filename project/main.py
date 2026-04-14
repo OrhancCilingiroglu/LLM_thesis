@@ -4,7 +4,7 @@ from logic import code_pipeline, dast_pipeline, sast_pipeline
 from utils import message_parsers, promptvariables
 import traceback
 import random
-
+from utils import OWASP
 db = db_handler.DBManager()
 fm = file_handler.FileManager()
 zappolicy = "API"
@@ -24,7 +24,7 @@ PORT_MAP = {
 }
 
 PRODUCERS = list(PORT_MAP.keys())
-TARGET_PER_CWE = 50
+TARGET_PER_CWE = 120
 
 
 def needed_iterations(cwe: int) -> int:
@@ -172,4 +172,4 @@ def generate_code(cwe_list: list, producers: list = None, max_workers: int = 3):
                 )
 
 
-generate_code(cwe_list=code_pipeline.A05_2025_Injection_list)
+generate_code(cwe_list=OWASP.A01_2025_Broken_Access_Control_list)

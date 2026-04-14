@@ -102,12 +102,11 @@ def analyze_cwe_correlation(db_cwe, bandit_out, semgrep_out, sonarqube_out, dast
     burpsuite_found = normalize_burpsuite(burpsuite_raw)
 
     # ZAP JSON parse
+    # ZAP "not-tested" veya parse hatası → zap_cwes boş kalır, satır düşürülmez
+    # Sadece ZAP geçerli JSON döndürürse parse edilir
     zap_alerts, err = safe_json_loads(dast_output_json)
     if err:
-        # ZAP parse hatası olsa bile burpsuite "found" ise satırı düşürme
-        if not burpsuite_found:
-            return {"error": err}
-        zap_alerts = []   # burpsuite kurtardı; ZAP boş sayılır
+        zap_alerts = []   # ZAP yoksa/hatalıysa boş say, satırı düşürme
 
     if isinstance(zap_alerts, dict):
         if "alerts" in zap_alerts and isinstance(zap_alerts["alerts"], list):
@@ -195,6 +194,36 @@ def analyze_cwe_correlation(db_cwe, bandit_out, semgrep_out, sonarqube_out, dast
 
 def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
     db = DBManager()
+
+    # ---------------------------------------------------------------
+    # Tüm DB'deki satır sayıları — "Total Rows" için (docker durumuna
+    # bakılmaksızın, sadece CWE → OWASP mapping'e göre gruplandırılır)
+    # ---------------------------------------------------------------
+    all_ids         = db.get_all_ids()
+    # per_owasp_all_total   : tüm DB'deki satır sayısı (sol kolon)
+    # per_owasp_all_vuln    : tüm DB'deki vulnerable satır sayısı (sol kolon)
+    # per_owasp_all_secure  : tüm DB'deki secure satır sayısı (sol kolon)
+    per_owasp_all_total  = Counter()
+    per_owasp_all_vuln   = Counter()
+    per_owasp_all_secure = Counter()
+
+    for aid in all_ids:
+        try:
+            cwe_val    = db.get_CWE_by_id(aid)
+            cwe_str    = str(cwe_val).strip().upper() if cwe_val else ""
+            owasp_cat  = cwe_to_owasp_2025(cwe_str)
+            is_sec     = db.is_secure_by_id(aid)
+            per_owasp_all_total[owasp_cat] += 1
+            if is_sec:
+                per_owasp_all_secure[owasp_cat] += 1
+            else:
+                per_owasp_all_vuln[owasp_cat] += 1
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------------
+    # docker = 'tested-successful' satırları — analiz için
+    # ---------------------------------------------------------------
     successful_ids = db.get_ids_by_docker_status("tested-successful")
 
     all_valid_results = []
@@ -202,25 +231,50 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
     corr_counts       = Counter()
     partial_counts    = Counter()
 
-    # per-tool detection counters (only vulnerable rows, only detected ones)
     tool_detection_counts = Counter()
 
     per_cwe_corr    = defaultdict(Counter)
     per_cwe_partial = defaultdict(Counter)
 
-    per_owasp_total         = Counter()
-    per_owasp_vuln_docker   = Counter()
-    per_owasp_secure_docker = Counter()
+    # docker-success satır sayıları (sağ kolon için)
+    per_owasp_docker_vuln   = Counter()   # docker success & vulnerable
+    per_owasp_docker_secure = Counter()   # docker success & secure
+
+    # valid (hatasız parse edilen) satır sayıları
     per_owasp_vuln_valid    = Counter()
     per_owasp_secure_valid  = Counter()
-    per_owasp_corr          = defaultdict(Counter)
-    per_owasp_partial       = defaultdict(Counter)
+
+    per_owasp_corr    = defaultdict(Counter)
+    per_owasp_partial = defaultdict(Counter)
+
+    # Correlation detay sayaçları: owasp → {"vuln": Counter, "secure": Counter}
+    per_owasp_vuln_corr   = defaultdict(Counter)   # vulnerable satırların correlation dağılımı
+    per_owasp_secure_corr = defaultdict(Counter)   # secure satırların correlation dağılımı
 
     per_owasp_detected_cwes = defaultdict(set)
     per_owasp_cwe_corr      = defaultdict(lambda: defaultdict(lambda: defaultdict(Counter)))
 
     secure_corr_counts     = Counter()
     vulnerable_corr_counts = Counter()
+
+    # ---------------------------------------------------------------
+    # Producer bazlı sayaçlar
+    # ---------------------------------------------------------------
+    # Tüm DB'deki satır sayısı (docker durumuna bakılmaksızın)
+    per_producer_total        = Counter()
+    # docker tested-successful olan satır sayısı
+    per_producer_docker_ok    = Counter()
+    # valid analyze edilen satırlar içinde correlation dağılımı
+    per_producer_corr         = defaultdict(Counter)
+
+    # Önce tüm DB'deki producer dağılımını say
+    import sqlite3 as _sqlite3
+    _conn = _sqlite3.connect(db.db_path)
+    _cur  = _conn.cursor()
+    _cur.execute("SELECT producer, COUNT(*) FROM code_cwe GROUP BY producer")
+    for _prod, _cnt in _cur.fetchall():
+        per_producer_total[_prod or "unknown"] = _cnt
+    _conn.close()
 
     with open(output_file, "w", encoding="utf-8") as f:
 
@@ -236,33 +290,31 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
                 secure_label = "Secure" if is_secure else "Vulnerable"
 
                 zap_json      = dast_row[1] if dast_row and len(dast_row) > 1 else None
-                burpsuite_raw = dast_row[2] if dast_row and len(dast_row) > 2 else None  # ← yeni
+                burpsuite_raw = dast_row[2] if dast_row and len(dast_row) > 2 else None
 
                 bandit    = sast_row[1] if sast_row and len(sast_row) > 1 else None
                 semgrep   = sast_row[2] if sast_row and len(sast_row) > 2 else None
                 sonarqube = sast_row[3] if sast_row and len(sast_row) > 3 else None
 
-                db_cwe = str(db_cwe).strip().upper() if db_cwe else ""
-
+                db_cwe    = str(db_cwe).strip().upper() if db_cwe else ""
                 owasp_cat = cwe_to_owasp_2025(db_cwe)
+
+                # docker-success satır sayaçları (hata olsa da sayılır)
+                if is_secure:
+                    per_owasp_docker_secure[owasp_cat] += 1
+                else:
+                    per_owasp_docker_vuln[owasp_cat] += 1
 
                 result = analyze_cwe_correlation(
                     db_cwe, bandit, semgrep, sonarqube, zap_json,
                     burpsuite_raw=burpsuite_raw
                 )
 
-                # OWASP docker satır sayaçları (hata olsa da sayılır)
-                per_owasp_total[owasp_cat] += 1
-                if is_secure:
-                    per_owasp_secure_docker[owasp_cat] += 1
-                else:
-                    per_owasp_vuln_docker[owasp_cat] += 1
-
                 if "error" in result:
                     error_counts[result["error"]] += 1
                     continue
 
-                # Valid (hatasız) satır sayaçları
+                # valid satır sayaçları
                 if is_secure:
                     per_owasp_secure_valid[owasp_cat] += 1
                 else:
@@ -275,8 +327,10 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
 
                 if is_secure:
                     secure_corr_counts[corr] += 1
+                    per_owasp_secure_corr[owasp_cat][corr] += 1
                 else:
                     vulnerable_corr_counts[corr] += 1
+                    per_owasp_vuln_corr[owasp_cat][corr] += 1
 
                 if corr == "PARTIAL MATCH":
                     partial_counts[result.get("partial_type") or "UNKNOWN_PARTIAL"] += 1
@@ -391,20 +445,26 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
             except ValueError:
                 return float("inf")
 
-        for cat, cat_total in per_owasp_total.most_common():
-            vuln_docker   = per_owasp_vuln_docker[cat]
-            secure_docker = per_owasp_secure_docker[cat]
-            vuln_valid    = per_owasp_vuln_valid[cat]
-            secure_valid  = per_owasp_secure_valid[cat]
+        # Kategorileri tüm DB toplamına göre sırala
+        for cat in sorted(per_owasp_all_total, key=lambda c: per_owasp_all_total[c], reverse=True):
+            all_total    = per_owasp_all_total[cat]
+            all_vuln     = per_owasp_all_vuln[cat]
+            all_secure   = per_owasp_all_secure[cat]
+            dock_vuln    = per_owasp_docker_vuln[cat]
+            dock_secure  = per_owasp_docker_secure[cat]
+            valid_vuln   = per_owasp_vuln_valid[cat]
+            valid_secure = per_owasp_secure_valid[cat]
 
             f.write(f"\n[{cat}]\n")
-            f.write(f"  Total Rows                                 : {cat_total}\n")
-            f.write(f"  Vulnerable Rows | Docker runnable rows     : {vuln_docker} | {vuln_valid}\n")
-            f.write(f"  Secure Rows     | Docker runnable rows     : {secure_docker} | {secure_valid}\n")
+            # Sol: tüm DB'deki satır sayısı  |  Sağ: docker tested-successful satır sayısı
+            f.write(f"  Total Rows                                 : {all_total}\n")
+            f.write(f"  Vulnerable Rows | Docker runnable rows     : {all_vuln} | {dock_vuln}\n")
+            f.write(f"  Secure Rows     | Docker runnable rows     : {all_secure} | {dock_secure}\n")
 
             cat_corr     = per_owasp_corr[cat]
             valid_in_cat = sum(cat_corr.values())
 
+            # ---- Correlation distribution — overall ----
             f.write("  Correlation distribution:\n")
             if valid_in_cat == 0:
                 f.write("    - (no valid results)\n")
@@ -412,12 +472,50 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
                 for k, v in cat_corr.most_common():
                     f.write(f"    - {k}: {v} ({v/valid_in_cat*100:.2f}%)\n")
 
+            # ---- Vulnerable codes breakdown ----
+            vuln_corr = per_owasp_vuln_corr[cat]
+            vuln_total_valid = sum(vuln_corr.values())
+            f.write("  Vulnerable Codes:\n")
+            if vuln_total_valid == 0:
+                f.write("    - (no valid vulnerable results)\n")
+            else:
+                CORR_ORDER = ["FULL MATCH", "PARTIAL MATCH", "TOOL MATCH BUT NOT DB", "NO MATCH"]
+                for k in CORR_ORDER:
+                    v = vuln_corr.get(k, 0)
+                    f.write(f"    * {k}: {v} ({v/vuln_total_valid*100:.2f}%)\n")
+                # partial sub-breakdown for vulnerable
+                if vuln_corr.get("PARTIAL MATCH", 0) > 0:
+                    f.write("      Partial breakdown:\n")
+                    for pk, pv in per_owasp_partial[cat].most_common():
+                        f.write(f"        - {pk}: {pv}\n")
+
+            # ---- Secure codes breakdown ----
+            sec_corr = per_owasp_secure_corr[cat]
+            sec_total_valid = sum(sec_corr.values())
+            f.write("  Secure Codes:\n")
+            if sec_total_valid == 0:
+                f.write("    - (no valid secure results)\n")
+            else:
+                # For secure codes: NO MATCH = correctly identified as secure
+                #                   anything else = falsely flagged as vulnerable
+                no_match   = sec_corr.get("NO MATCH", 0)
+                flagged    = sec_total_valid - no_match
+                f.write(f"    * Secure-tested (no tool alarm) : {no_match} ({no_match/sec_total_valid*100:.2f}%)\n")
+                f.write(f"    * Flagged as vulnerable         : {flagged} ({flagged/sec_total_valid*100:.2f}%)\n")
+                if flagged > 0:
+                    f.write("      Flagged breakdown:\n")
+                    for k in ["FULL MATCH", "PARTIAL MATCH", "TOOL MATCH BUT NOT DB"]:
+                        v = sec_corr.get(k, 0)
+                        if v > 0:
+                            f.write(f"        - {k}: {v}\n")
+
             if cat_corr.get("PARTIAL MATCH", 0) > 0:
                 ptotal = cat_corr["PARTIAL MATCH"]
-                f.write("  Partial breakdown:\n")
+                f.write("  Partial breakdown (overall):\n")
                 for pk, pv in per_owasp_partial[cat].most_common():
                     f.write(f"    - {pk}: {pv} ({pv/ptotal*100:.2f}% of partial)\n")
 
+            # detected CWEs — at least one partial or full match
             detected = sorted(per_owasp_detected_cwes.get(cat, set()), key=cwe_sort_key)
             f.write(f"  CWEs with at least one detection (partial or full): {len(detected)}\n")
             if detected:
@@ -425,6 +523,7 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
             else:
                 f.write("    - (none detected)\n")
 
+            # full CWE breakdown — numerik sıralama
             f.write("  CWE breakdown:\n")
             cwe_map = per_owasp_cwe_corr[cat]
             if not cwe_map:
@@ -441,7 +540,7 @@ def run_modular_correlation_analysis(output_file="cwe_correlation_results.txt"):
                             flagged_count  = cwe_total - no_match_count
                             f.write(
                                 f"    - {cwe} | {secure_label:<10} | total={cwe_total} | "
-                                f"tested-secure={no_match_count}, vulnerable={flagged_count}\n"
+                                f"tested-secure={no_match_count}, flagged={flagged_count}\n"
                             )
                         else:
                             f.write(

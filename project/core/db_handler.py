@@ -311,6 +311,14 @@ class DBManager:
         conn.close()
         return result[0] if result else None  # to get strip tuple error
     
+    def fetch_burp_data_by_id(self, code_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, burpsuite FROM code_cwe WHERE id = ?", (code_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[1] if result else None
+
     def get_docker_info_by_cwe(self, cwe_id):
         #* it will work for burpsuite so no reason to make docker status dynamic
         conn = sqlite3.connect(self.db_path)
