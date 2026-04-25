@@ -334,8 +334,30 @@ BURP_TYPE_TO_CWE = {
 16778240 :	["CWE-16","CWE-319"],
 16778496 :	["CWE-912"]
 }
-
+#* Those configurations are set in burpsuite configuration library manually
+#* According to issue list above.
 CWE_TO_BURP_CONFIG = {
+    #! A01:Broken Access Control
+    "CWE-22":"CWE-22-Path-Traversal",
+    "CWE-23":"CWE-23-Relative-Path-Traversal",
+    "CWE-35":"CWE-23-Relative-Path-Traversal",
+    "CWE-200":"CWE-200-Exposure-Sensitive-Information",
+    "CWE-284":"CWE-284-Broken-Access-Control",
+    "CWE-352":"CWE-352-Cross-Site-Request-Forgery",
+    "CWE-441":"CWE-441-Confused-Deputy",
+    "CWE-538":"CWE-538-Insertion-Directory",
+    "CWE-540":"CWE-540-Sensitive-Information-Source-Code",
+    "CWE-548":"CWE-538-Insertion-Directory",
+    "CWE-601":"CWE-601-Open-Redirect",
+
+    #! A04:Cryptographic Failures
+    "CWE-319":"CWE-319-Cleartext-Transmission-Sensitive-Information",
+    "CWE-326":"CWE-326-Inadequate-Encryption-Strength",
+    "CWE-327":"CWE-327-Broken-Cryptographic-Algorithm",
+    "CWE-347":"CWE-347-Improper-Verification-Cryptographic-Signature",
+    "CWE-523":"CWE-523-Unprotected-Transport-Credentials",
+
+    #! A05:Injection
     "CWE-77":  "CWE-77-78-Command-Injection",   
     "CWE-78":  "CWE-77-78-Command-Injection",
     "CWE-79":  "CWE-79-Cross-site-scripting",
@@ -353,6 +375,13 @@ CWE_TO_BURP_CONFIG = {
     "CWE-20":  "CWE-20-Improper-Input",
     "CWE-643": "CWE-643-Xpath-Injection",
     "default": "Audit checks - all except time-based detection methods",
+
+    #! A07: Authentication Failures
+    "CWE-287":  "CWE-287-Improper Authentication",   
+    "CWE-295":  "CWE-295-Improper-Certificate-Validation",
+    "CWE-346":  "CWE-346-Origin-Validation-Error",
+    "CWE-384":  "CWE-384-Session-Fixation",
+    #! A09: Security Logging and Alerting Failures
 }
 
 

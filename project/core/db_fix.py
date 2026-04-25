@@ -36,13 +36,13 @@ def fix_broken_code_in_db(start_id: int = 4571):
     conn.close()
     print(f"Fixed {fixed} rows starting from id={start_id}")
 
-def reset_docker_status(start_id: int = 4571):
+def reset_docker_status(start_id: int = 6655):
     db = DBManager()
     conn = sqlite3.connect(db.db_path)
     cur = conn.cursor()
     cur.execute("""
         UPDATE code_cwe 
-        SET bandit = 'not-tested'
+        SET owasp_zap = 'not-tested'
         WHERE id >= ?
     """, (start_id,))
     updated = cur.rowcount
@@ -50,6 +50,6 @@ def reset_docker_status(start_id: int = 4571):
     conn.close()
     print(f"Reset {updated} rows to 'not-tested'")
 
-reset_docker_status(start_id=4571)
+reset_docker_status(start_id=6655)
 
 #fix_broken_code_in_db(start_id=4571)

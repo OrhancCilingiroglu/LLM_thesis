@@ -4,7 +4,7 @@ import requests
 import time
 from requests.exceptions import RequestException
 import docker
-from docker.errors import DockerException, NotFound
+from docker.errors import DockerException, NotFound, ImageNotFound
 
 
 class DockerManager:
@@ -22,17 +22,19 @@ class DockerManager:
             self.client = None
 
     def build_image(self) -> bool:
-        """Build Docker image from workdir with given tag."""
+        """Build Docker image from workdir with given tag.
+           Should remove pre-existing images with the same tag"""
         if not self.client:
             print("FAIL: Docker client not initialized")
             return False
-
+        self._remove_image_silent()
         try:
             print(f"\nBUILD Docker image: {self.tag}")
             image, logs = self.client.images.build(
                 path=self.workdir,
                 tag=self.tag,
                 rm=True,
+                forcerm=True,
             )
             # logs: iterable of dicts with "stream" usually
             for chunk in logs:
@@ -49,13 +51,12 @@ class DockerManager:
             return False
 
 
-#! Needs testing
     def run_container(self, container_port: int | None = None):
         """Run container from built image, bind workdir to /app and expose port."""
         if not self.client:
             print("FAIL: Docker client not initialized")
             return None
-
+        container = None
         try:
             print(f"\nRUN Docker container from image: {self.tag}")
             c_port = container_port or self.port
@@ -92,7 +93,7 @@ class DockerManager:
                     return False
             
             ok = False
-            for _ in range(6):  # retry ~6s
+            for _ in range(15):  #!!! retry ~6s hızlandırmak için azaltılabilir ama bazı uygulamalarda kaçırma olacak
                 if _http_ok("/health") or _http_ok("/"):
                     ok = True
                     break
@@ -132,25 +133,86 @@ class DockerManager:
 
 
     def stop_and_remove(self) -> bool:
-        """Stop and remove container by name (tag)."""
+        """Stop and remove the container identified by self.tag.
+ 
+        Does NOT remove the image; call full_cleanup() if you want both.
+        """
         if not self.client:
             print("FAIL: Docker client not initialized")
             return False
-
+ 
         try:
             print(f"\nSTOPPING and REMOVING container: {self.tag}")
             try:
                 container = self.client.containers.get(self.tag)
             except NotFound:
-                print(f"WARN: Container '{self.tag}' not found.")
-                return False
-
-            container.stop()
-            container.remove()
+                print(f"WARN: Container '{self.tag}' not found (already removed?).")
+                return True  # nothing to do, counts as success
+ 
+            container.stop(timeout=10)
+            container.remove(force=True)
             print(f"SUCCESS: Container '{self.tag}' stopped and removed.")
             return True
-
+ 
         except Exception:
             print("FAIL: Error while stopping/removing container:")
             traceback.print_exc()
             return False
+
+    def remove_image(self) -> bool:
+        """Remove the Docker image built for this run. Safe to call if missing."""
+        if not self.client:
+            return False
+        try:
+            self.client.images.remove(image=self.tag, force=True, noprune=False)
+            print(f"SUCCESS: Image '{self.tag}' removed.")
+            return True
+        except ImageNotFound:
+            print(f"WARN: Image '{self.tag}' not found (already removed?).")
+            return True
+        except Exception:
+            print(f"FAIL: Could not remove image '{self.tag}':")
+            traceback.print_exc()
+            return False
+
+    def full_cleanup(self) -> None:
+        """Stop container + remove container + remove image. Call from every finally block."""
+        self.stop_and_remove()
+        self.remove_image()
+
+    @staticmethod
+    def prune_build_cache(client=None) -> None:
+        """Delete all dangling build-cache objects. Equivalent to: docker builder prune -f"""
+        try:
+            c = client or docker.from_env()
+            result = c.api.prune_builds()
+            reclaimed = result.get("SpaceReclaimed", 0)
+            print(f"INFO: Build cache pruned — {reclaimed / 1e6:.1f} MB reclaimed.")
+        except Exception:
+            print("WARN: Build cache prune failed (non-fatal):")
+            traceback.print_exc()
+
+    @staticmethod
+    def prune_dangling_images(client=None) -> None:
+        """Remove untagged/dangling images. Equivalent to: docker image prune -f"""
+        try:
+            c = client or docker.from_env()
+            result = c.images.prune(filters={"dangling": True})
+            reclaimed = result.get("SpaceReclaimed", 0)
+            print(f"INFO: Dangling images pruned — {reclaimed / 1e6:.1f} MB reclaimed.")
+        except Exception:
+            print("WARN: Dangling image prune failed (non-fatal):")
+            traceback.print_exc()
+
+    def _remove_image_silent(self) -> None:
+        """Remove image for self.tag without raising. Used before rebuild."""
+        if not self.client:
+            return
+        try:
+            self.client.images.remove(image=self.tag, force=True, noprune=False)
+            print(f"INFO: Pre-existing image '{self.tag}' removed before rebuild.")
+        except ImageNotFound:
+            pass
+        except Exception:
+            print(f"WARN: Could not pre-remove image '{self.tag}' (non-fatal):")
+            traceback.print_exc()

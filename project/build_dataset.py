@@ -23,7 +23,8 @@ from core.db_handler import DBManager
 from core.cwe_summary import cwe_to_owasp, parse_sast_cwes, parse_zap_cwes  # reuse
 
 RNG = random.Random(42)
-PROMPT_TEMPLATE = (
+
+PROMPT_TEMPLATE = ( 
     "You are a Static Application Security Testing (SAST) tool.\n"
     "List the CWE IDs present in the following code.\n"
     "Output ONLY a comma-separated list like: CWE-xx, CWE-yy.\n"

@@ -173,3 +173,7 @@ def generate_code(cwe_list: list, producers: list = None, max_workers: int = 3):
 
 
 generate_code(cwe_list=OWASP.A01_2025_Broken_Access_Control_list)
+generate_code(cwe_list=OWASP.A04_2025_Cryptographic_Failures_list) 
+generate_code(cwe_list=OWASP.A05_2025_Injection_list) 
+generate_code(cwe_list=OWASP.A07_2025_Authentication_Failures_list) 
+generate_code(cwe_list=OWASP.A09_2025_Security_Logging_and_Alerting_Failures_list) 
