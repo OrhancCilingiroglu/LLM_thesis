@@ -61,7 +61,9 @@ def scrub_code_for_leaks(code: str, mode: str = "line") -> tuple[str, int]:
                 continue
             kept.append(line)
         return "\n".join(kept), removed
-
+    if mode == "none" or not CWE_LITERAL_RE.search(code):
+        return code, 0
+    
     # token mode
     cleaned, n = CWE_LITERAL_RE.subn("", code)
     # collapse the double spaces that result from token removal
@@ -228,7 +230,7 @@ def main():
                     help="Skip CWEs with fewer than this many verified vulnerable samples")
     ap.add_argument("--max_per_bucket", type=int, default=60,
                     help="Cap per (cwe, secure_flag) to keep the set balanced")
-    ap.add_argument("--scrub_mode",     default="line", choices=["line", "token"],
+    ap.add_argument("--scrub_mode",     default="line", choices=["line", "token", "none"],
                     help="How to remove CWE-xx leaks from code: "
                          "'line' drops the whole line (recommended), "
                          "'token' only removes the CWE-xx token")

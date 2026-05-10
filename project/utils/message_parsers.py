@@ -340,7 +340,7 @@ CWE_TO_BURP_CONFIG = {
     #! A01:Broken Access Control
     "CWE-22":"CWE-22-Path-Traversal",
     "CWE-23":"CWE-23-Relative-Path-Traversal",
-    "CWE-35":"CWE-23-Relative-Path-Traversal",
+    "CWE-35":"CWE-23-Relative-Path-Traversal",  #bunlar gerçekten bitti mi elle kontrol lazım
     "CWE-200":"CWE-200-Exposure-Sensitive-Information",
     "CWE-284":"CWE-284-Broken-Access-Control",
     "CWE-352":"CWE-352-Cross-Site-Request-Forgery",
