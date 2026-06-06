@@ -205,10 +205,10 @@ if __name__ == "__main__":
         run_bandit     = True,
         run_semgrep    = True,
         run_sonar      = True,
-        run_zap        = True,
+        run_zap        = False,
         run_nikto      = False,
         run_burp       = False,
-        docker_workers = 1,
+        docker_workers = 6,
     )
 
     #! uncomment to run as a continuous loop alongside the generation script

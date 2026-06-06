@@ -350,6 +350,12 @@ CWE_TO_BURP_CONFIG = {
     "CWE-548":"CWE-538-Insertion-Directory",
     "CWE-601":"CWE-601-Open-Redirect",
 
+    #! A02:Security Misconfiguration
+
+
+    #! A03:Software Supply Chain
+
+
     #! A04:Cryptographic Failures
     "CWE-319":"CWE-319-Cleartext-Transmission-Sensitive-Information",
     "CWE-326":"CWE-326-Inadequate-Encryption-Strength",
@@ -381,6 +387,10 @@ CWE_TO_BURP_CONFIG = {
     "CWE-295":  "CWE-295-Improper-Certificate-Validation",
     "CWE-346":  "CWE-346-Origin-Validation-Error",
     "CWE-384":  "CWE-384-Session-Fixation",
+
+    
+    #! A08: Software or Data Integrity Failures
+
     #! A09: Security Logging and Alerting Failures
 }
 

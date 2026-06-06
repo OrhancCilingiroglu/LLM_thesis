@@ -3,28 +3,105 @@ Build a balanced, stratified JSONL dataset from code_cwe.db for LLM fine-tuning.
 
 Selection rules (all configurable):
   * only rows where docker == 'tested-successful'
-  * vulnerable rows must be correlation-verified (FULL or PARTIAL MATCH)
-    using bandit/semgrep/sonarqube/zap/burpsuite — reuses the same logic as
-    db_manipulation.py so we stay consistent with the analyser
-  * secure rows must be correlation-NO MATCH (no tool flagged them → clean)
-  * per-CWE cap: at most MAX_PER_CLASS per (cwe, secure) bucket
-  * per-CWE floor: CWEs with < MIN_PER_CLASS vulnerable samples are dropped
+  * vulnerable rows must clear a correlation filter:
+        - FULL              → SAST hit AND DAST hit (strict / clean labels)
+        - PARTIAL           → SAST hit XOR DAST hit (single-source detection)
+        - FULL_OR_PARTIAL   → either of the above (default — maximum recall)
+    Burpsuite is now folded into DAST hits via the per-finding
+    `burp_scan_result` table (see Burpsuite contribution below).
+  * secure rows must be correlation-NONE (no tool flagged the DB CWE → clean)
+  * per-CWE cap: at most MAX_PER_BUCKET per (cwe, secure_flag) bucket
+  * per-CWE floor: CWEs with < MIN_PER_CWE vulnerable samples are dropped
   * code-level dedup via sha1 of stripped source
   * stratified split by (owasp_category, secure_flag) so every split
     preserves both distributions
 
-Outputs:
+Multi-label targets
+-------------------
+The default target is the *sorted union* of every CWE id reported across
+every product output for a given row:
+
+      target = sorted(  bandit   ∪  semgrep    ∪  sonarqube
+                      ∪ zap      ∪  burpsuite  ∪  {DB CWE} )
+
+Burpsuite contribution
+~~~~~~~~~~~~~~~~~~~~~~
+The `code_cwe.burpsuite` column only stores a coarse 'found' / 'not-found'
+status against the DB-labelled CWE — which throws away every other CWE
+Burp actually detected. The detailed per-finding rows live in the
+`burp_scan_result` table, each with a `mapped_cwe` column produced by
+`dast_pipeline.py` via `message_parsers.BURP_TYPE_TO_CWE`. We read that
+table directly so Burp contributes the full set of CWEs it flagged.
+
+The legacy 'found' status is functionally equivalent to
+`db_cwe ∈ burp_mapped_cwes` (see `DBManager.save_scan_results`,
+burpsuite branch), so the FULL / PARTIAL / NONE filter behaves the same
+on the DB CWE — we just gain richer multi-label targets.
+
+Optional confidence floor (`--burp_min_confidence`) discards 'tentative'
+or 'firm' Burp findings — useful for an ablation against noisier DAST.
+
+For secure rows the target stays "NONE" — these rows have already been
+filtered to mean "no tool raised any alarm for the DB CWE", so we want
+the model to learn the clean label for them.
+
+Legacy / single-label mode
+--------------------------
+`--multi_label False` falls back to the original target = single DB CWE.
+Useful for the classical single-label baseline experiment.
+
+`--include_db_cwe_in_target False` builds the union strictly from tool
+outputs (without injecting the DB ground-truth label).
+
+`--corr_filter` lets the user pick FULL / PARTIAL / FULL_OR_PARTIAL.
+
+Outputs
+-------
   - dataset_train.jsonl, dataset_val.jsonl, dataset_test.jsonl
-  - dataset_stats.json  (counts per CWE / OWASP / split)
+  - dataset_stats.json  (counts per CWE / OWASP / split, plus target-level
+                         CWE frequency and per-tool CWE coverage)
 """
-import os, re, json, hashlib, random, argparse
+import os, re, json, sqlite3, hashlib, random, argparse
 from collections import defaultdict, Counter
 from core.db_handler import DBManager
 from core.cwe_summary import cwe_to_owasp, parse_sast_cwes, parse_zap_cwes  # reuse
 
 RNG = random.Random(42)
 
-PROMPT_TEMPLATE = ( 
+# Burp REST API confidence levels, weakest → strongest. Used by the
+# `--burp_min_confidence` flag for noise control.
+BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
+
+# Correlation filter choices for vulnerable rows. FULL_OR_PARTIAL is the
+# default and matches the legacy behaviour of the previous build script.
+CORR_FILTER_CHOICES = ("FULL", "PARTIAL", "FULL_OR_PARTIAL")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-label blacklist — manually curated noise filter
+# ─────────────────────────────────────────────────────────────────────────────
+# CWEs listed here are dropped from the multi-label `target` (and from the
+# `all_cwes` field) WHEN they come from a tool output **and** they are not
+# the DB ground-truth CWE for the row. The DB CWE itself is never filtered:
+# if a blacklisted CWE happens to be a row's ground truth, it stays. The
+# rule targets tool *noise*, not the human label.
+#
+# The raw per-tool sets remain untouched in `meta.tool_cwes` so the thesis
+# can run "with vs. without blacklist" ablations on the same JSONL files.
+#
+# Use canonical "CWE-NN" strings, no spaces. Examples to consider once you
+# inspect `dataset_stats.json -> by_target_cwe`:
+#
+#   "CWE-200",   # Information Exposure — Semgrep flags many benign logs
+#   "CWE-754",   # Improper Check for Unusual Conditions — very generic
+#   "CWE-693",   # Protection Mechanism Failure — abstract umbrella CWE
+#
+# Empty by default; the user is expected to fill this set by hand.
+BLACKLIST_MULTILABEL: set[str] = {
+    # "CWE-200",
+    # "CWE-754",
+}
+
+PROMPT_TEMPLATE = (
     "You are a Static Application Security Testing (SAST) tool.\n"
     "List the CWE IDs present in the following code.\n"
     "Output ONLY a comma-separated list like: CWE-xx, CWE-yy.\n"
@@ -49,6 +126,7 @@ def scrub_code_for_leaks(code: str, mode: str = "line") -> tuple[str, int]:
     mode="line"  → delete the ENTIRE line that contains any CWE-xx token
                    (safer: also drops nearby hints like '# SQL injection - CWE-89')
     mode="token" → delete just the CWE-xx token, keep the line
+    mode="none"  → no scrubbing at all (debug / ablation only)
     """
     if not CWE_LITERAL_RE.search(code):
         return code, 0
@@ -61,9 +139,10 @@ def scrub_code_for_leaks(code: str, mode: str = "line") -> tuple[str, int]:
                 continue
             kept.append(line)
         return "\n".join(kept), removed
-    if mode == "none" or not CWE_LITERAL_RE.search(code):
+
+    if mode == "none":
         return code, 0
-    
+
     # token mode
     cleaned, n = CWE_LITERAL_RE.subn("", code)
     # collapse the double spaces that result from token removal
@@ -71,28 +150,216 @@ def scrub_code_for_leaks(code: str, mode: str = "line") -> tuple[str, int]:
     return cleaned, n
 
 
-def row_correlation(db_cwe, sast_row, dast_row, burp_status):
-    """Return 'FULL' / 'PARTIAL' / 'NONE' for a single row, consistent with analyser."""
-    bandit    = parse_sast_cwes(sast_row[1] if sast_row and len(sast_row) > 1 else "")
-    semgrep   = parse_sast_cwes(sast_row[2] if sast_row and len(sast_row) > 2 else "")
-    sonarqube = parse_sast_cwes(sast_row[3] if sast_row and len(sast_row) > 3 else "")
-    zap       = parse_zap_cwes(dast_row[1]  if dast_row and len(dast_row) > 1 else None)
+# ─────────────────────────────────────────────────────────────
+# Per-row CWE extraction
+# ─────────────────────────────────────────────────────────────
+def _cwe_sort_key(c: str) -> int:
+    """
+    Numeric sort key for CWE strings. Unparseable values (very rare —
+    e.g. malformed tool output) fall into a single bucket at the end so
+    the overall order stays deterministic.
+    """
+    try:
+        return int(str(c).upper().replace("CWE-", "").strip())
+    except (ValueError, AttributeError):
+        return 10 ** 9
 
-    in_sast = db_cwe in (bandit | semgrep | sonarqube)
-    in_zap  = db_cwe in zap
-    in_burp = str(burp_status or "").strip().lower() == "found"
-    in_dast = in_zap or in_burp
 
-    if in_sast and in_dast:      return "FULL"
-    if in_sast or in_dast:       return "PARTIAL"
+def _normalise_cwe(raw) -> str | None:
+    """
+    Turn whatever a tool wrote ('89', '-1', 'CWE-89', 'CWE_89', ' CWE-89 ')
+    into a canonical 'CWE-89' string, or return None for junk values.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip().upper()
+    if not s:
+        return None
+    if not s.startswith("CWE-"):
+        s = f"CWE-{s}"
+    try:
+        n = int(s.replace("CWE-", "").strip())
+    except ValueError:
+        return None
+    if n <= 0:                       # CWE-0 / CWE--1 are placeholder noise
+        return None
+    return f"CWE-{n}"
+
+
+def fetch_burp_cwes_from_db(db_path: str, code_id: int,
+                            min_confidence: str | None = None) -> set:
+    """
+    Pull every CWE id Burp emitted for this code_id from the
+    `burp_scan_result` detail table. Returns a deduplicated set such as
+    {'CWE-79', 'CWE-89'}.
+
+    The on-disk `code_cwe.burpsuite` column only stores a coarse
+    'found'/'not-found' status against the DB-labelled CWE and discards
+    every other CWE Burp detected — we sidestep it by reading the
+    per-finding detail table directly.
+
+    `min_confidence`, if given, drops findings below the threshold
+    (Burp's order is tentative < firm < certain). Default = keep all
+    confidence levels so the multi-label target is maximally rich.
+
+    The function fails open: if the `burp_scan_result` table is missing
+    (older DBs) or empty, we simply return an empty set.
+    """
+    # Resolve the confidence threshold once
+    if min_confidence:
+        try:
+            threshold_idx = BURP_CONFIDENCE_LEVELS.index(min_confidence.lower())
+            allowed = set(BURP_CONFIDENCE_LEVELS[threshold_idx:])
+        except ValueError:
+            allowed = None
+    else:
+        allowed = None
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT mapped_cwe, confidence FROM burp_scan_result WHERE code_id = ?",
+            (code_id,),
+        )
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        # Table absent (older schema) — degrade gracefully to empty set.
+        return set()
+    finally:
+        conn.close()
+
+    found = set()
+    for mapped, conf in rows:
+        cwe = _normalise_cwe(mapped)
+        if cwe is None:
+            continue
+        if allowed is not None:
+            c = (str(conf).strip().lower() if conf else "")
+            # Findings with missing/unknown confidence are dropped only when
+            # an explicit confidence floor is requested; otherwise everything
+            # is kept (default = maximum recall).
+            if not c or c not in allowed:
+                continue
+        found.add(cwe)
+    return found
+
+
+def per_tool_cwes(db: DBManager, code_id: int, sast_row, dast_row,
+                  burp_min_confidence: str | None = None) -> dict:
+    """
+    Return a dict {tool_name: set_of_CWE_strings} for every CWE-emitting
+    tool on a single row. Burpsuite is included by reading the
+    `burp_scan_result` detail table (see `fetch_burp_cwes_from_db`).
+    """
+    return {
+        "bandit":    parse_sast_cwes(sast_row[1] if sast_row and len(sast_row) > 1 else ""),
+        "semgrep":   parse_sast_cwes(sast_row[2] if sast_row and len(sast_row) > 2 else ""),
+        "sonarqube": parse_sast_cwes(sast_row[3] if sast_row and len(sast_row) > 3 else ""),
+        "zap":       parse_zap_cwes(dast_row[1] if dast_row and len(dast_row) > 1 else None),
+        "burpsuite": fetch_burp_cwes_from_db(db.db_path, code_id,
+                                             min_confidence=burp_min_confidence),
+    }
+
+
+def merged_cwes(db_cwe: str, tool_cwes: dict, include_db_cwe: bool = True,
+                blacklist: set[str] | None = None) -> tuple[list, int]:
+    """
+    Union of every CWE id reported across all product outputs, returned as
+    a tuple `(sorted_list, n_ignored_by_blacklist)`.
+
+    Blacklist semantics
+    -------------------
+    If `blacklist` is given, any CWE produced by a tool that is in the
+    blacklist *and is not equal to the DB ground-truth CWE for this row*
+    is dropped from the union. The DB CWE itself is never filtered — a
+    blacklisted entry that happens to also be the row's ground truth is
+    preserved (the rule targets tool *noise*, not the human label).
+
+    `include_db_cwe`
+    ----------------
+    When True the DB ground-truth CWE is also added to the union. This
+    is the recommended default: a row reaches this point only after
+    passing the correlation filter, so the DB CWE is empirically present
+    in the code even if one particular tool happens to miss it. The DB
+    CWE is added AFTER blacklist filtering, so its inclusion never
+    depends on the blacklist contents.
+    """
+    blacklist = blacklist or set()
+    db_cwe_norm = str(db_cwe).strip().upper() if db_cwe else ""
+
+    # Flatten all tool detections first so we can count blacklist hits
+    # against the raw union (before any filtering / DB-CWE injection).
+    raw_union: set = set()
+    for cwes in tool_cwes.values():
+        raw_union |= cwes
+
+    kept = {c for c in raw_union
+            if not (c in blacklist and c != db_cwe_norm)}
+    ignored = len(raw_union) - len(kept)
+
+    if include_db_cwe and db_cwe_norm:
+        kept.add(db_cwe_norm)
+    return sorted(kept, key=_cwe_sort_key), ignored
+
+
+def row_correlation(db_cwe: str, tool_cwes: dict) -> str:
+    """
+    FULL / PARTIAL / NONE classification for the DB-labelled CWE on a
+    single row.
+
+    SAST hit ⇔ db_cwe in (bandit ∪ semgrep ∪ sonarqube)
+    DAST hit ⇔ db_cwe in (zap     ∪ burpsuite)
+
+    This is equivalent to the legacy implementation (see
+    `DBManager.save_scan_results`, burpsuite branch) where the cached
+    'found' status was set iff the DB CWE was present in the set of
+    Burp mapped_cwes for that row — only now we get full per-CWE
+    granularity for the rest of the pipeline.
+    """
+    in_sast = db_cwe in (tool_cwes["bandit"]
+                         | tool_cwes["semgrep"]
+                         | tool_cwes["sonarqube"])
+    in_dast = db_cwe in (tool_cwes["zap"] | tool_cwes["burpsuite"])
+
+    if in_sast and in_dast:
+        return "FULL"
+    if in_sast or in_dast:
+        return "PARTIAL"
     return "NONE"
 
 
-def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line"):
+def _accept_vuln(corr: str, corr_filter: str) -> bool:
+    """Apply the user-selected correlation filter to a vulnerable row."""
+    if corr_filter == "FULL":
+        return corr == "FULL"
+    if corr_filter == "PARTIAL":
+        return corr == "PARTIAL"
+    # FULL_OR_PARTIAL (default) — legacy behaviour
+    return corr in ("FULL", "PARTIAL")
+
+
+# ─────────────────────────────────────────────────────────────
+# Row collection
+# ─────────────────────────────────────────────────────────────
+def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
+                 include_db_cwe_in_target=True,
+                 burp_min_confidence: str | None = None,
+                 corr_filter: str = "FULL_OR_PARTIAL",
+                 min_full_per_cwe: int = 0,
+                 min_partial_per_cwe: int = 0):
     ids = db.get_ids_by_docker_status("tested-successful")
     # bucket[(cwe, is_secure)] = [record, ...]
     buckets = defaultdict(list)
     seen_hashes = set()
+
+    # Per-CWE correlation histogram, tracked BEFORE the corr_filter is
+    # applied. Used to enforce `min_full_per_cwe` / `min_partial_per_cwe`
+    # independently of which rows actually make it into the buckets —
+    # this lets you say "train on FULL rows only, but keep a CWE only if
+    # it has at least N PARTIAL examples as supporting evidence", which
+    # `len(buckets[cwe])` cannot express on its own.
+    cwe_corr_counts: dict[str, Counter] = defaultdict(Counter)
 
     # leak-stats
     scrubbed_rows = 0
@@ -136,22 +403,57 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line"):
 
             is_secure = db.is_secure_by_id(cid)
             sast_row  = db.fetch_sast_data_by_id(cid)
-            dast_row  = db.fetch_dast_data_by_id(cid)   # (id, zap, burp)
-            burp      = dast_row[2] if dast_row and len(dast_row) > 2 else None
-            corr      = row_correlation(cwe, sast_row, dast_row, burp)
+            dast_row  = db.fetch_dast_data_by_id(cid)   # (id, zap, burp_status)
+
+            # all per-tool CWE sets — fetched ONCE per row and reused for
+            # both correlation filtering and the multi-label target
+            tool_cwes = per_tool_cwes(db, cid, sast_row, dast_row,
+                                      burp_min_confidence=burp_min_confidence)
+            corr      = row_correlation(cwe, tool_cwes)
+
+            # legacy 'found'/'not-found' status — still kept in meta for
+            # provenance / debugging even though correlation no longer
+            # depends on it directly
+            burp_status = dast_row[2] if dast_row and len(dast_row) > 2 else None
 
             # acceptance rules
             if is_secure:
                 if corr != "NONE":       # any tool alarm → skip (not clean)
                     continue
             else:
-                if corr not in ("FULL", "PARTIAL"):   # verified-vuln only
+                # Track the per-CWE correlation breakdown for *every*
+                # vulnerable row (post-dedup) — even ones we are about
+                # to drop via `corr_filter`. The CWE-level floors below
+                # consult this histogram.
+                cwe_corr_counts[cwe][corr] += 1
+                if not _accept_vuln(corr, corr_filter):
                     continue
+
+            # multi-label target: union of every CWE any tool flagged
+            # (bandit + semgrep + sonarqube + zap + burpsuite) plus the DB
+            # CWE, after the blacklist filter has removed manually-curated
+            # tool-noise CWEs (the DB CWE itself is exempt — see
+            # `merged_cwes` docstring).
+            all_cwes, ignored_by_blacklist = merged_cwes(
+                cwe, tool_cwes,
+                include_db_cwe=include_db_cwe_in_target,
+                blacklist=BLACKLIST_MULTILABEL,
+            )
 
             seen_hashes.add(h)
             buckets[(cwe, bool(is_secure))].append({
-                "id": cid, "code": code, "cwe": cwe, "owasp": owasp,
-                "is_secure": bool(is_secure), "correlation": corr,
+                "id":          cid,
+                "code":        code,
+                "cwe":         cwe,                       # DB ground-truth CWE
+                "owasp":       owasp,
+                "is_secure":   bool(is_secure),
+                "correlation": corr,                      # FULL / PARTIAL / NONE for DB CWE
+                "tool_cwes":   {k: sorted(v, key=_cwe_sort_key)
+                                for k, v in tool_cwes.items()},
+                "burp_status": (str(burp_status).strip().lower()
+                                if burp_status else ""),
+                "all_cwes":    all_cwes,                  # sorted union, used as target
+                "blacklist_ignored_count": ignored_by_blacklist,
             })
         except Exception as e:
             print(f"[warn] id={cid}: {e}")
@@ -160,9 +462,37 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line"):
           f"total tokens/lines removed={total_removals} | "
           f"dropped (empty after scrub)={empty_after_scrub}")
 
-    # enforce floor on vulnerable count per CWE
-    kept_cwes = {c for (c, sec), rows in buckets.items()
-                 if not sec and len(rows) >= min_per_cwe}
+    # Blacklist provenance — how many tool-flagged CWE *instances* were
+    # dropped, across how many rows. Reads from the per-row counter we
+    # stored above. Useful as a sanity check after editing the constant.
+    total_blacklist_ignored = sum(r["blacklist_ignored_count"]
+                                  for rows in buckets.values() for r in rows)
+    rows_with_ignored = sum(1
+                            for rows in buckets.values() for r in rows
+                            if r["blacklist_ignored_count"] > 0)
+    print(f"[blacklist] entries={len(BLACKLIST_MULTILABEL)} | "
+          f"ignored instances={total_blacklist_ignored} | "
+          f"rows affected={rows_with_ignored} | "
+          f"set={sorted(BLACKLIST_MULTILABEL, key=_cwe_sort_key)}")
+
+    # ── Per-CWE floor enforcement ────────────────────────────────────
+    # A CWE is kept iff all three thresholds are simultaneously cleared:
+    #   1. total vulnerable rows in the bucket  ≥ min_per_cwe
+    #   2. FULL    rows for this CWE in the DB  ≥ min_full_per_cwe
+    #   3. PARTIAL rows for this CWE in the DB  ≥ min_partial_per_cwe
+    # Counts (2) and (3) are taken from `cwe_corr_counts`, which records
+    # every vulnerable row *before* the corr_filter dropped any of them,
+    # so the floors are evidence-based and independent of `--corr_filter`.
+    kept_cwes = set()
+    for (c, sec), rows in buckets.items():
+        if sec:
+            continue
+        full_n    = cwe_corr_counts[c]["FULL"]
+        partial_n = cwe_corr_counts[c]["PARTIAL"]
+        if (len(rows) >= min_per_cwe
+                and full_n    >= min_full_per_cwe
+                and partial_n >= min_partial_per_cwe):
+            kept_cwes.add(c)
     buckets = {k: v for k, v in buckets.items() if k[0] in kept_cwes}
 
     # cap per bucket with a fixed seed so the selection is reproducible
@@ -190,8 +520,30 @@ def stratified_split(rows, test_frac=0.2, val_frac=0.1):
     return train, val, test
 
 
-def to_jsonl_record(r):
-    target = "NONE" if r["is_secure"] else r["cwe"]
+# ─────────────────────────────────────────────────────────────
+# JSONL emission
+# ─────────────────────────────────────────────────────────────
+def to_jsonl_record(r, multi_label: bool = True) -> dict:
+    """
+    Build the JSONL record for a single example.
+
+    target
+    ------
+      * secure row              → "NONE"
+      * vulnerable, multi_label → comma-separated sorted union of every
+                                  CWE any tool flagged (+ DB CWE)
+      * vulnerable, legacy      → single DB CWE (old behaviour)
+
+    meta carries provenance so thesis-side analysis can drill into where
+    each label came from (which tool detected what).
+    """
+    if r["is_secure"]:
+        target = "NONE"
+    elif multi_label and r.get("all_cwes"):
+        target = ", ".join(r["all_cwes"])
+    else:
+        target = r["cwe"]
+
     return {
         "id":     r["id"],
         "prompt": PROMPT_TEMPLATE.format(code=r["code"]),
@@ -202,32 +554,106 @@ def to_jsonl_record(r):
             "db_secure":   r["is_secure"],
             "owasp":       r["owasp"],
             "correlation": r["correlation"],
+            "all_cwes":    r.get("all_cwes", []),
+            "tool_cwes":   r.get("tool_cwes", {}),
+            "burp_status": r.get("burp_status", ""),
+            # How many CWE instances this row had filtered out by
+            # BLACKLIST_MULTILABEL. 0 means either the blacklist is
+            # empty or none of the tool detections were on the list.
+            "blacklist_ignored_count": r.get("blacklist_ignored_count", 0),
         },
     }
 
 
-def write_jsonl(path, rows):
+def write_jsonl(path: str, rows: list, multi_label: bool = True) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for r in rows:
-            f.write(json.dumps(to_jsonl_record(r), ensure_ascii=False) + "\n")
+            f.write(json.dumps(to_jsonl_record(r, multi_label=multi_label),
+                               ensure_ascii=False) + "\n")
 
 
-def stats(rows):
-    s = {"total": len(rows),
-         "by_cwe":   Counter(r["cwe"]   for r in rows),
-         "by_owasp": Counter(r["owasp"] for r in rows),
-         "secure":   sum(1 for r in rows if r["is_secure"]),
-         "vulnerable": sum(1 for r in rows if not r["is_secure"])}
-    s["by_cwe"]   = dict(s["by_cwe"])
-    s["by_owasp"] = dict(s["by_owasp"])
-    return s
+# ─────────────────────────────────────────────────────────────
+# Stats
+# ─────────────────────────────────────────────────────────────
+def stats(rows: list) -> dict:
+    """
+    Per-split aggregate stats. In addition to the legacy `by_cwe` count
+    (which buckets each row by its DB CWE) and `by_owasp`, we also emit:
+
+      * by_target_cwe          — histogram over every CWE appearing in
+                                 any row's *target* list (right metric
+                                 for label imbalance in multi-label)
+      * by_tool_cwe[tool]      — per-tool histogram of CWEs that tool
+                                 detected across the split (useful for
+                                 thesis figures like 'CWE coverage by
+                                 product')
+      * by_correlation         — counts of FULL / PARTIAL / NONE rows
+      * avg_targets_per_vuln_row — average label cardinality for the
+                                   vulnerable subset
+    """
+    target_counter = Counter()
+    tool_counters: dict[str, Counter] = defaultdict(Counter)
+    corr_counter = Counter()
+
+    for r in rows:
+        corr_counter[r.get("correlation", "NONE")] += 1
+        if r.get("is_secure"):
+            target_counter["NONE"] += 1
+        else:
+            # fall back to the DB CWE if all_cwes is somehow empty
+            for c in (r.get("all_cwes") or [r["cwe"]]):
+                target_counter[c] += 1
+            for tool, cwes in (r.get("tool_cwes") or {}).items():
+                for c in cwes:
+                    tool_counters[tool][c] += 1
+
+    n_vuln = sum(1 for r in rows if not r["is_secure"])
+
+    return {
+        "total":          len(rows),
+        "by_cwe":         dict(Counter(r["cwe"]   for r in rows)),
+        "by_owasp":       dict(Counter(r["owasp"] for r in rows)),
+        "by_target_cwe":  dict(target_counter),
+        "by_tool_cwe":    {tool: dict(c) for tool, c in tool_counters.items()},
+        "by_correlation": dict(corr_counter),
+        "secure":         sum(1 for r in rows if r["is_secure"]),
+        "vulnerable":     n_vuln,
+        "avg_targets_per_vuln_row": (
+            sum(len(r.get("all_cwes", [])) for r in rows if not r["is_secure"])
+            / max(1, n_vuln)
+        ),
+        # Blacklist provenance: total instances filtered out across this
+        # split and how many rows were touched. Useful for the thesis
+        # methodology section and for "with vs. without blacklist" deltas.
+        "blacklist_total_ignored": sum(r.get("blacklist_ignored_count", 0)
+                                       for r in rows),
+        "blacklist_rows_affected": sum(1 for r in rows
+                                       if r.get("blacklist_ignored_count", 0) > 0),
+    }
+
+
+def _str2bool(v) -> bool:
+    """argparse-friendly bool parser so --multi_label False actually works."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "t")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out_dir",        default="dataset_out")
     ap.add_argument("--min_per_cwe",    type=int, default=15,
-                    help="Skip CWEs with fewer than this many verified vulnerable samples")
+                    help="Skip CWEs with fewer than this many *accepted* vulnerable "
+                         "samples (i.e. rows that survived --corr_filter).")
+    ap.add_argument("--min_full_per_cwe", type=int, default=0,
+                    help="Independent floor: only keep CWEs that have at least this "
+                         "many FULL-match vulnerable rows in the DB. Counted BEFORE "
+                         "--corr_filter is applied, so you can e.g. train on FULL rows "
+                         "while requiring strong PARTIAL evidence. Default 0 (off).")
+    ap.add_argument("--min_partial_per_cwe", type=int, default=0,
+                    help="Independent floor: only keep CWEs that have at least this "
+                         "many PARTIAL-match vulnerable rows in the DB. Counted BEFORE "
+                         "--corr_filter is applied. Default 0 (off).")
     ap.add_argument("--max_per_bucket", type=int, default=60,
                     help="Cap per (cwe, secure_flag) to keep the set balanced")
     ap.add_argument("--scrub_mode",     default="line", choices=["line", "token", "none"],
@@ -236,19 +662,51 @@ def main():
                          "'token' only removes the CWE-xx token")
     ap.add_argument("--test_frac",      type=float, default=0.2)
     ap.add_argument("--val_frac",       type=float, default=0.1)
+    ap.add_argument("--multi_label",    type=_str2bool, default=True,
+                    help="If True (default), target = sorted union of every CWE reported "
+                         "by any tool (bandit/semgrep/sonarqube/zap/burpsuite) plus the "
+                         "DB CWE. If False, target = single DB CWE (legacy single-label).")
+    ap.add_argument("--include_db_cwe_in_target", type=_str2bool, default=True,
+                    help="When multi_label is True, whether to also include the DB "
+                         "ground-truth CWE in the target list (default True).")
+    ap.add_argument("--corr_filter", choices=list(CORR_FILTER_CHOICES),
+                    default="FULL_OR_PARTIAL",
+                    help="Which correlation buckets to keep for vulnerable rows: "
+                         "FULL (SAST and DAST both detected the DB CWE), "
+                         "PARTIAL (only one of SAST/DAST detected it), "
+                         "FULL_OR_PARTIAL (default — legacy behaviour).")
+    ap.add_argument("--burp_min_confidence",
+                    choices=list(BURP_CONFIDENCE_LEVELS),
+                    default=None,
+                    help="Drop Burp findings below this confidence level "
+                         "(Burp order: tentative < firm < certain). "
+                         "Default: keep all confidences.")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
     db = DBManager()
     buckets = collect_rows(db, args.min_per_cwe, args.max_per_bucket,
-                           scrub_mode=args.scrub_mode)
+                           scrub_mode=args.scrub_mode,
+                           include_db_cwe_in_target=args.include_db_cwe_in_target,
+                           burp_min_confidence=args.burp_min_confidence,
+                           corr_filter=args.corr_filter,
+                           min_full_per_cwe=args.min_full_per_cwe,
+                           min_partial_per_cwe=args.min_partial_per_cwe)
     all_rows = [r for rows in buckets.values() for r in rows]
-    print(f"[info] collected {len(all_rows)} rows across {len({r['cwe'] for r in all_rows})} CWEs")
+    print(f"[info] collected {len(all_rows)} rows across "
+          f"{len({r['cwe'] for r in all_rows})} CWEs "
+          f"(multi_label={args.multi_label}, "
+          f"corr_filter={args.corr_filter}, "
+          f"min_per_cwe={args.min_per_cwe}, "
+          f"min_full_per_cwe={args.min_full_per_cwe}, "
+          f"min_partial_per_cwe={args.min_partial_per_cwe}, "
+          f"include_db_cwe_in_target={args.include_db_cwe_in_target}, "
+          f"burp_min_confidence={args.burp_min_confidence})")
 
     train, val, test = stratified_split(all_rows, args.test_frac, args.val_frac)
-    write_jsonl(os.path.join(args.out_dir, "dataset_train.jsonl"), train)
-    write_jsonl(os.path.join(args.out_dir, "dataset_val.jsonl"),   val)
-    write_jsonl(os.path.join(args.out_dir, "dataset_test.jsonl"),  test)
+    write_jsonl(os.path.join(args.out_dir, "dataset_train.jsonl"), train, multi_label=args.multi_label)
+    write_jsonl(os.path.join(args.out_dir, "dataset_val.jsonl"),   val,   multi_label=args.multi_label)
+    write_jsonl(os.path.join(args.out_dir, "dataset_test.jsonl"),  test,  multi_label=args.multi_label)
 
     report = {"train": stats(train), "val": stats(val), "test": stats(test)}
     with open(os.path.join(args.out_dir, "dataset_stats.json"), "w") as f:
