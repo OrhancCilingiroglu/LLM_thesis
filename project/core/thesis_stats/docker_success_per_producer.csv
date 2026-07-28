@@ -1,4 +1,0 @@
-producer,total_samples,docker_ok,docker_success_rate_pct,share_of_all_docker_ok_pct
-openai,11404,6716,58.89,49.99
-claude,6621,3765,56.86,28.03
-groq,9794,2953,30.15,21.98
