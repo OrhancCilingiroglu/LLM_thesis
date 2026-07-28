@@ -10,14 +10,19 @@ fm = file_handler.FileManager()
 #docker = docker_handler.DockerManager()
 zappolicy = "API"
 api_router = api_handler.ApiHandlerRouter()
-# 200 284 352 bitti
-ids = db.get_docker_info_by_cwe(441)
-ids2 = db.get_docker_info_by_cwe(538)
-# en son sadece 540 kalmıştı
-ids3 = db.get_docker_info_by_cwe(540)
 
 
-id_list = [row[0] for row in ids + ids2 + ids3]
+ids = db.get_docker_info_by_cwe(287)
+ids2 = db.get_docker_info_by_cwe(295)
+ids3 = db.get_docker_info_by_cwe(346)
+ids4 = db.get_docker_info_by_cwe(384)
+ids5 = db.get_docker_info_by_cwe(345)
+ids6 = db.get_docker_info_by_cwe(502)
+ids7 = db.get_docker_info_by_cwe(565)
+ids8 = db.get_docker_info_by_cwe(829)
+
+
+id_list = [row[0] for row in ids + ids2 + ids3 + ids4 + ids5 + ids6 + ids7 + ids8]
 
 dast_pipeline.dast_scan(    # pending control will prevent retest of applications. not worling now should update
         start_id= None,

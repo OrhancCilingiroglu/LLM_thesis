@@ -347,7 +347,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                  burp_min_confidence: str | None = None,
                  corr_filter: str = "FULL_OR_PARTIAL",
                  min_full_per_cwe: int = 0,
-                 min_partial_per_cwe: int = 0):
+                 min_partial_per_cwe: int = 0,
+                 exact_per_bucket: int | None = None):
     ids = db.get_ids_by_docker_status("tested-successful")
     # bucket[(cwe, is_secure)] = [record, ...]
     buckets = defaultdict(list)
@@ -495,10 +496,59 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
             kept_cwes.add(c)
     buckets = {k: v for k, v in buckets.items() if k[0] in kept_cwes}
 
-    # cap per bucket with a fixed seed so the selection is reproducible
+    # ── Per-bucket sampling ───────────────────────────────────────────────
+    # Shuffle first (fixed seed → reproducible across runs) then apply the
+    # requested size constraint.
+    #
+    # exact_per_bucket (new):
+    #   When set, every (cwe, secure_flag) bucket must contain *exactly* N
+    #   rows after sampling.  Buckets with fewer than N rows are discarded so
+    #   the dataset stays perfectly balanced.  This is the recommended setting
+    #   for controlled ablation experiments cited in the thesis (§ Dataset
+    #   Construction) because it eliminates CWE-level class-size variance as
+    #   a confound.  CWEs whose *vulnerable* bucket cannot reach the quota are
+    #   dropped entirely (secure buckets of surviving CWEs may still be below
+    #   quota when the DB simply does not have enough clean examples — those
+    #   CWEs are also dropped so every surviving CWE contributes the same
+    #   volume on both sides of the secure/vulnerable axis).
+    #
+    # max_per_bucket (legacy):
+    #   Upper-bound only; buckets with fewer rows are kept as-is.  Useful
+    #   when dataset coverage matters more than perfect balance.
     for k in buckets:
         RNG.shuffle(buckets[k])
-        buckets[k] = buckets[k][:max_per_bucket]
+
+    if exact_per_bucket is not None:
+        # First pass: enforce the exact quota per bucket.
+        sized: dict = {}
+        for k, rows in buckets.items():
+            if len(rows) >= exact_per_bucket:
+                sized[k] = rows[:exact_per_bucket]
+            # Buckets below quota are intentionally excluded.
+
+        # Second pass: a CWE is kept only when *both* its vulnerable bucket
+        # (is_secure=False) AND its secure bucket (is_secure=True) met quota.
+        # This guarantees a perfectly balanced secure/vuln split per CWE.
+        cwes_with_full_quota = {
+            cwe for (cwe, is_sec) in sized if not is_sec
+        } & {
+            cwe for (cwe, is_sec) in sized if is_sec
+        }
+
+        dropped = {cwe for (cwe, _) in buckets
+                   if cwe not in cwes_with_full_quota}
+        if dropped:
+            print(f"[exact_per_bucket={exact_per_bucket}] dropped "
+                  f"{len(dropped)} CWE(s) that could not fill both buckets: "
+                  f"{sorted(dropped)}")
+
+        buckets = {k: v for k, v in sized.items()
+                   if k[0] in cwes_with_full_quota}
+    else:
+        # Legacy behaviour: cap without requiring exact count.
+        for k in buckets:
+            buckets[k] = buckets[k][:max_per_bucket]
+
     return buckets
 
 
@@ -656,6 +706,13 @@ def main():
                          "--corr_filter is applied. Default 0 (off).")
     ap.add_argument("--max_per_bucket", type=int, default=60,
                     help="Cap per (cwe, secure_flag) to keep the set balanced")
+    ap.add_argument("--exact_per_bucket", type=int, default=None,
+                    help="If set, sample *exactly* this many rows per (cwe, secure_flag) "
+                         "bucket.  CWEs that cannot fill both their secure and vulnerable "
+                         "buckets to the requested size are dropped entirely, producing a "
+                         "perfectly class-balanced dataset at the cost of CWE coverage. "
+                         "Overrides --max_per_bucket when provided. "
+                         "Example: --exact_per_bucket 5 gives 5 secure + 5 vulnerable per CWE.")
     ap.add_argument("--scrub_mode",     default="line", choices=["line", "token", "none"],
                     help="How to remove CWE-xx leaks from code: "
                          "'line' drops the whole line (recommended), "
@@ -691,13 +748,15 @@ def main():
                            burp_min_confidence=args.burp_min_confidence,
                            corr_filter=args.corr_filter,
                            min_full_per_cwe=args.min_full_per_cwe,
-                           min_partial_per_cwe=args.min_partial_per_cwe)
+                           min_partial_per_cwe=args.min_partial_per_cwe,
+                           exact_per_bucket=args.exact_per_bucket)
     all_rows = [r for rows in buckets.values() for r in rows]
     print(f"[info] collected {len(all_rows)} rows across "
           f"{len({r['cwe'] for r in all_rows})} CWEs "
           f"(multi_label={args.multi_label}, "
           f"corr_filter={args.corr_filter}, "
           f"min_per_cwe={args.min_per_cwe}, "
+          f"exact_per_bucket={args.exact_per_bucket}, "
           f"min_full_per_cwe={args.min_full_per_cwe}, "
           f"min_partial_per_cwe={args.min_partial_per_cwe}, "
           f"include_db_cwe_in_target={args.include_db_cwe_in_target}, "

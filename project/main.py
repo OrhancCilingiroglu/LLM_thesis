@@ -24,7 +24,7 @@ PORT_MAP = {
 }
 
 PRODUCERS = list(PORT_MAP.keys())
-TARGET_PER_CWE = 120
+TARGET_PER_CWE = 60
 
 
 def needed_iterations(cwe: int) -> int:
@@ -177,9 +177,12 @@ generate_code(cwe_list=OWASP.A02_2025_Security_Misconfiguration_list)
 generate_code(cwe_list=OWASP.A03_2025_Sofware_Supply_Chain_list) 
 generate_code(cwe_list=OWASP.A04_2025_Cryptographic_Failures_list) 
 generate_code(cwe_list=OWASP.A05_2025_Injection_list) 
+generate_code(cwe_list=OWASP.A06_2025_Insecure_Design_list) 
 generate_code(cwe_list=OWASP.A07_2025_Authentication_Failures_list)
 generate_code(cwe_list=OWASP.A08_2025_Software_or_Data_Integrity_Failures_list) 
 generate_code(cwe_list=OWASP.A09_2025_Security_Logging_and_Alerting_Failures_list)
+generate_code(cwe_list=OWASP.A10_2025_Mishandling_of_Exceptional_Conditions_list)
 
 #Production continues below here
-#generate_code(cwe_list=OWASP.A06_2025_Insecure_Design_list) 
+
+ 

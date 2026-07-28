@@ -290,7 +290,7 @@ BURP_TYPE_TO_CWE = {
 5246720	:["CWE-20"],
 5246721	:["CWE-20"],
 5246722	:["CWE-20"],
-5246976	:["CWE-20"],
+5246976	:["CWE-20"], 
 5246977	:["CWE-20"],
 5246978	:["CWE-20"],
 5246979	:["CWE-73","CWE-20"],
@@ -337,33 +337,40 @@ BURP_TYPE_TO_CWE = {
 #* Those configurations are set in burpsuite configuration library manually
 #* According to issue list above.
 CWE_TO_BURP_CONFIG = {
-    #! A01:Broken Access Control
+    #! A01:Broken Access Control - done
     "CWE-22":"CWE-22-Path-Traversal",
     "CWE-23":"CWE-23-Relative-Path-Traversal",
-    "CWE-35":"CWE-23-Relative-Path-Traversal",  #bunlar gerçekten bitti mi elle kontrol lazım
+    "CWE-35":"CWE-23-Relative-Path-Traversal",  
     "CWE-200":"CWE-200-Exposure-Sensitive-Information",
     "CWE-284":"CWE-284-Broken-Access-Control",
     "CWE-352":"CWE-352-Cross-Site-Request-Forgery",
     "CWE-441":"CWE-441-Confused-Deputy",
     "CWE-538":"CWE-538-Insertion-Directory",
     "CWE-540":"CWE-540-Sensitive-Information-Source-Code",
-    "CWE-548":"CWE-538-Insertion-Directory",
-    "CWE-601":"CWE-601-Open-Redirect",
+    "CWE-548":"CWE-538-Insertion-Directory", 
+    "CWE-601":"CWE-601-Open-Redirect",      
 
-    #! A02:Security Misconfiguration
+    #! A02:Security Misconfiguration - done
+    "CWE-11":"CWE-11-Dotnet-misconfig",
+    "CWE-16":"CWE-16-Configuration",
+    "CWE-611":"CWE-611-XML-Restriction",
+    "CWE-614":"CWE-614-Cookie-Attribute",
+    "CWE-776":"CWE-776-XML-Entity-Expansion",
+    "CWE-942":"CWE-942-Cross-Domain-Policy",
 
 
-    #! A03:Software Supply Chain
 
+    #! A03:Software Supply Chain - done
+    "CWE-1104":"CWE-1104-Unmaintained-Third-Party",
 
-    #! A04:Cryptographic Failures
+    #! A04:Cryptographic Failures - done 
     "CWE-319":"CWE-319-Cleartext-Transmission-Sensitive-Information",
     "CWE-326":"CWE-326-Inadequate-Encryption-Strength",
     "CWE-327":"CWE-327-Broken-Cryptographic-Algorithm",
     "CWE-347":"CWE-347-Improper-Verification-Cryptographic-Signature",
     "CWE-523":"CWE-523-Unprotected-Transport-Credentials",
 
-    #! A05:Injection
+    #! A05:Injection - done
     "CWE-77":  "CWE-77-78-Command-Injection",   
     "CWE-78":  "CWE-77-78-Command-Injection",
     "CWE-79":  "CWE-79-Cross-site-scripting",
@@ -380,18 +387,38 @@ CWE_TO_BURP_CONFIG = {
     "CWE-159": "CWE-159-Improper-Handling-Elements",  # burada bir sıkıntı yaşadık taramalar hata vermeden takılı kalıyor 12k paket atmış
     "CWE-20":  "CWE-20-Improper-Input",
     "CWE-643": "CWE-643-Xpath-Injection",
+    "CWE-917": "CWE-917-Expression-Language-Injection", # bu test edilmedi
+    "CWE-610": "CWE-610-Out-of-band-resource",
     "default": "Audit checks - all except time-based detection methods",
 
-    #! A07: Authentication Failures
+    #! A06: Insecure Design - done
+    "CWE-73": "CWE-73-External-Control-Filenamepath",
+    "CWE-311":  "CWE-311-Missing-Encryption-Sensitivedata",
+    "CWE-434":  "CWE-434-File-Upload",
+    "CWE-436":  "CWE-436-Interpretation-Conflict",
+    "CWE-444":  "CWE-444-HTTP-Request-Smuggling",
+    "CWE-525":  "CWE-525-Browser-Cache-Sensitive-Info",
+    "CWE-598":  "CWE-598-HTTP-Request-Sensitive-Query",
+    "CWE-642":  "CWE-642-Critical-State-Control",
+    "CWE-693":  "CWE-693-Protection-Mechanism-Failure",
+    "CWE-1021": "CWE-693-Protection-Mechanism-Failure",
+
+
+    #! A07: Authentication Failures - done
     "CWE-287":  "CWE-287-Improper Authentication",   
     "CWE-295":  "CWE-295-Improper-Certificate-Validation",
     "CWE-346":  "CWE-346-Origin-Validation-Error",
     "CWE-384":  "CWE-384-Session-Fixation",
-
     
-    #! A08: Software or Data Integrity Failures
-
+    
+    #! A08: Software or Data Integrity Failures - done
+    "CWE-345":  "CWE-345-Insufficient-Verification-Data-Authenticity",
+    "CWE-502":  "CWE-502-Deserialization-Untrusted-Data",
+    "CWE-565":  "CWE-565-Cookies-Without-Validation",
+    "CWE-829":  "CWE-829-Untrusted-Control-Sphere"
     #! A09: Security Logging and Alerting Failures
+
+    #! A10: Mishandling of Exceptional Conditions
 }
 
 

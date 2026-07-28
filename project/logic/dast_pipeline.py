@@ -148,9 +148,10 @@ def nikto_scan(targetport, outputname):
     subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print(f"[+] Scan complete. Output saved to {output_file}")
 
-def burp_scan(port, config_name):
+def burp_scan(port, config_name, max_wait_seconds=300, poll_interval=5):
+
     target = f"http://localhost:{port}"
-    
+
     scan_payload = {
         "urls": [target],
         "scan_configurations": [
@@ -178,12 +179,21 @@ def burp_scan(port, config_name):
     print(f"[+] Burp scan started → scan_id={scan_id}, config={config_name}, target={target}")
 
     paused_count = 0
+    start_time = time.time()
+    data = {}
+
     while True:
+        # Hard timeout: if scan hasn't finished within max_wait_seconds, abort polling
+        elapsed = time.time() - start_time
+        if elapsed > max_wait_seconds:
+            print(f"SKIP: Burp scan timed out after {elapsed:.0f}s, scan_id={scan_id}, port={port}")
+            return None, []
+
         status_resp = requests.get(f"{BURP_API_URL}/v0.1/scan/{scan_id}")
         data = status_resp.json()
         status = data.get("scan_status")
         issue_count = len(data.get("issue_events", []))
-        print(f"    Burp scan status: {status} | found issue: {issue_count}")
+        print(f"    Burp scan status: {status} | found issue: {issue_count} | elapsed: {elapsed:.0f}s")
 
         if status == "succeeded":
             break
@@ -195,9 +205,11 @@ def burp_scan(port, config_name):
                 print(f"SKIP: Burp scan paused, container erişilemiyor port={port}")
                 return None, []
 
-        time.sleep(5)
+        time.sleep(poll_interval)
 
     return scan_id, data.get("issue_events", [])
+
+
 def build_and_burp(id):
     code, dockerfile, sql_script, port, reqs, docker = db.get_files_by_id(id)
 

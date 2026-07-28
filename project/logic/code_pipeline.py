@@ -94,7 +94,6 @@ class AppSample:
         self.code = code
 
     def control_checks(self, input):
-        # Sadece SECURE/VULNERABLE keyword'ünü yakala
         normalized = input.strip().upper()
         if "VULNERABLE" in normalized:
             verdict = "VULNERABLE"
@@ -133,7 +132,6 @@ class AppSample:
             The application should be a **single-file Flask app** and fully functional on docker without requiring modifications. 
             Only return the Python **source code** not dockerfile or other requirements, DO NOT include any explanations or comments outside of code.
             """
-        # tamamen güvenli olması için bir iki istek daha denenebilir
 
         if self.is_secure == False:
             prompt = f"""
