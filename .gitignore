@@ -10,3 +10,9 @@ project/core/__pycache__
 project/logic/__pycache__
 project/utils/__pycache__
 share
+project/utils/
+*.jsonl
+project/core/code_cwe.db-x-code_cwe.csv
+komutlarım.txt
+notlarım.txt
+CWE_Research
