@@ -53,7 +53,32 @@ Useful for the classical single-label baseline experiment.
 `--include_db_cwe_in_target False` builds the union strictly from tool
 outputs (without injecting the DB ground-truth label).
 
-`--corr_filter` lets the user pick FULL / PARTIAL / FULL_OR_PARTIAL.
+`--corr_filter` lets the user pick FULL / PARTIAL / FULL_OR_PARTIAL / ALL.
+
+Raw tool-consensus mode
+-----------------------
+    --corr_filter ALL --secure_target tool_union \
+    --min_per_cwe 0 --max_per_bucket 0
+
+keeps every docker-runnable row and labels it purely by what the products
+reported — no correlation gate, no forced "NONE" for secure rows, no per-CWE
+caps. This answers a different research question from the default pipeline:
+instead of "can a model learn verified vulnerabilities?", it asks "can a model
+reproduce the aggregate output of five scanners?".
+
+Two caveats that must be reported alongside any result from this mode:
+
+  1. The labels inherit every false positive the tools produce. Scanner rules
+     that fire on framework boilerplate (host binding, missing security
+     headers, absent CSRF tokens) attach to nearly every row, so a constant
+     predictor that ignores the code entirely scores a high micro-F1. Always
+     report that constant-predictor floor as a control.
+  2. A DB-secure row can carry a non-empty target. "Secure" then means only
+     "no tool confirmed the DB-labelled CWE", not "no vulnerability present".
+
+Code scrubbing (`--scrub_mode`) and post-scrub dedup still apply in this mode
+and should not be disabled: without them, 50%+ of rows leak a literal CWE-xx
+token into the prompt, letting the model copy the answer out of a comment.
 
 Outputs
 -------
@@ -74,7 +99,24 @@ BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
 
 # Correlation filter choices for vulnerable rows. FULL_OR_PARTIAL is the
 # default and matches the legacy behaviour of the previous build script.
-CORR_FILTER_CHOICES = ("FULL", "PARTIAL", "FULL_OR_PARTIAL")
+#
+# ALL disables correlation-based acceptance entirely: every docker-runnable
+# row is kept, secure and vulnerable alike, regardless of whether any tool
+# confirmed the DB CWE. Use it together with --secure_target tool_union to
+# build the "raw tool consensus" dataset, where the label is defined purely
+# by what the products reported rather than by the DB ground truth. Note that
+# this deliberately removes the quality gate — the resulting labels contain
+# whatever noise the tools produce, which is the point when the research
+# question is about tool reliability itself.
+CORR_FILTER_CHOICES = ("FULL", "PARTIAL", "FULL_OR_PARTIAL", "ALL")
+
+# What to write as `target` for rows the DB marks secure.
+#   none       — legacy: always "NONE" (the model should find nothing)
+#   tool_union — the same multi-label union used for vulnerable rows, so a
+#                secure-flagged row that tools still flagged carries those
+#                CWEs. Only meaningful with --corr_filter ALL, because the
+#                default filter already guarantees secure rows are alarm-free.
+SECURE_TARGET_CHOICES = ("none", "tool_union")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-label blacklist — manually curated noise filter
@@ -331,6 +373,8 @@ def row_correlation(db_cwe: str, tool_cwes: dict) -> str:
 
 def _accept_vuln(corr: str, corr_filter: str) -> bool:
     """Apply the user-selected correlation filter to a vulnerable row."""
+    if corr_filter == "ALL":
+        return True                      # no correlation gate at all
     if corr_filter == "FULL":
         return corr == "FULL"
     if corr_filter == "PARTIAL":
@@ -419,8 +463,12 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
 
             # acceptance rules
             if is_secure:
-                if corr != "NONE":       # any tool alarm → skip (not clean)
-                    continue
+                # corr_filter=ALL keeps secure rows even when a tool raised an
+                # alarm. That is intentional in "raw tool consensus" mode: the
+                # alarm itself is the label we want to study, not a reason to
+                # discard the row.
+                if corr_filter != "ALL" and corr != "NONE":
+                    continue             # any tool alarm → skip (not clean)
             else:
                 # Track the per-CWE correlation breakdown for *every*
                 # vulnerable row (post-dedup) — even ones we are about
@@ -544,10 +592,11 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
 
         buckets = {k: v for k, v in sized.items()
                    if k[0] in cwes_with_full_quota}
-    else:
+    elif max_per_bucket and max_per_bucket > 0:
         # Legacy behaviour: cap without requiring exact count.
         for k in buckets:
             buckets[k] = buckets[k][:max_per_bucket]
+    # max_per_bucket <= 0 → no cap at all (keep every accepted row)
 
     return buckets
 
@@ -573,22 +622,39 @@ def stratified_split(rows, test_frac=0.2, val_frac=0.1):
 # ─────────────────────────────────────────────────────────────
 # JSONL emission
 # ─────────────────────────────────────────────────────────────
-def to_jsonl_record(r, multi_label: bool = True) -> dict:
+def to_jsonl_record(r, multi_label: bool = True,
+                    secure_target: str = "none") -> dict:
     """
     Build the JSONL record for a single example.
 
     target
     ------
-      * secure row              → "NONE"
+      * secure row, secure_target="none"       → "NONE"  (legacy)
+      * secure row, secure_target="tool_union" → same union rule as a
+                                                 vulnerable row; "NONE" when
+                                                 no tool flagged anything
       * vulnerable, multi_label → comma-separated sorted union of every
                                   CWE any tool flagged (+ DB CWE)
       * vulnerable, legacy      → single DB CWE (old behaviour)
+
+    Note on secure_target="tool_union": `all_cwes` may include the DB CWE when
+    --include_db_cwe_in_target is on. For a secure row that would assert the
+    very vulnerability the row is supposed to lack, so the DB CWE is stripped
+    here and only genuine tool detections survive.
 
     meta carries provenance so thesis-side analysis can drill into where
     each label came from (which tool detected what).
     """
     if r["is_secure"]:
-        target = "NONE"
+        if secure_target == "tool_union":
+            tool_union = sorted(
+                {c for cwes in (r.get("tool_cwes") or {}).values() for c in cwes
+                 if c not in BLACKLIST_MULTILABEL},
+                key=_cwe_sort_key,
+            )
+            target = ", ".join(tool_union) if tool_union else "NONE"
+        else:
+            target = "NONE"
     elif multi_label and r.get("all_cwes"):
         target = ", ".join(r["all_cwes"])
     else:
@@ -615,17 +681,19 @@ def to_jsonl_record(r, multi_label: bool = True) -> dict:
     }
 
 
-def write_jsonl(path: str, rows: list, multi_label: bool = True) -> None:
+def write_jsonl(path: str, rows: list, multi_label: bool = True,
+                secure_target: str = "none") -> None:
     with open(path, "w", encoding="utf-8") as f:
         for r in rows:
-            f.write(json.dumps(to_jsonl_record(r, multi_label=multi_label),
+            f.write(json.dumps(to_jsonl_record(r, multi_label=multi_label,
+                                               secure_target=secure_target),
                                ensure_ascii=False) + "\n")
 
 
 # ─────────────────────────────────────────────────────────────
 # Stats
 # ─────────────────────────────────────────────────────────────
-def stats(rows: list) -> dict:
+def stats(rows: list, secure_target: str = "none") -> dict:
     """
     Per-split aggregate stats. In addition to the legacy `by_cwe` count
     (which buckets each row by its DB CWE) and `by_owasp`, we also emit:
@@ -648,14 +716,28 @@ def stats(rows: list) -> dict:
     for r in rows:
         corr_counter[r.get("correlation", "NONE")] += 1
         if r.get("is_secure"):
-            target_counter["NONE"] += 1
+            # Under secure_target="tool_union" a secure row can still carry
+            # labels, so count its actual tool detections rather than assuming
+            # "NONE". With the legacy secure_target the tool sets are empty by
+            # construction (corr==NONE was required), so this reduces to the
+            # old behaviour automatically.
+            sec_union = {c for cwes in (r.get("tool_cwes") or {}).values()
+                         for c in cwes if c not in BLACKLIST_MULTILABEL}
+            if secure_target == "tool_union" and sec_union:
+                for c in sec_union:
+                    target_counter[c] += 1
+            else:
+                target_counter["NONE"] += 1
         else:
             # fall back to the DB CWE if all_cwes is somehow empty
             for c in (r.get("all_cwes") or [r["cwe"]]):
                 target_counter[c] += 1
-            for tool, cwes in (r.get("tool_cwes") or {}).items():
-                for c in cwes:
-                    tool_counters[tool][c] += 1
+        # Per-tool coverage is provenance, not label — track it for every row
+        # regardless of secure flag, otherwise the "CWE coverage by product"
+        # figure silently omits half the dataset in ALL mode.
+        for tool, cwes in (r.get("tool_cwes") or {}).items():
+            for c in cwes:
+                tool_counters[tool][c] += 1
 
     n_vuln = sum(1 for r in rows if not r["is_secure"])
 
@@ -731,7 +813,16 @@ def main():
                     help="Which correlation buckets to keep for vulnerable rows: "
                          "FULL (SAST and DAST both detected the DB CWE), "
                          "PARTIAL (only one of SAST/DAST detected it), "
-                         "FULL_OR_PARTIAL (default — legacy behaviour).")
+                         "FULL_OR_PARTIAL (default — legacy behaviour), "
+                         "ALL (no correlation gate at all — keeps every "
+                         "docker-runnable row including secure rows that tools "
+                         "flagged; pair with --secure_target tool_union).")
+    ap.add_argument("--secure_target", choices=list(SECURE_TARGET_CHOICES),
+                    default="none",
+                    help="Target for DB-secure rows: 'none' (default, legacy — "
+                         "always NONE) or 'tool_union' (the CWEs tools actually "
+                         "reported for that row, DB CWE excluded). "
+                         "'tool_union' only makes sense with --corr_filter ALL.")
     ap.add_argument("--burp_min_confidence",
                     choices=list(BURP_CONFIDENCE_LEVELS),
                     default=None,
@@ -739,6 +830,13 @@ def main():
                          "(Burp order: tentative < firm < certain). "
                          "Default: keep all confidences.")
     args = ap.parse_args()
+
+    if args.secure_target == "tool_union" and args.corr_filter != "ALL":
+        print("[warn] --secure_target tool_union with --corr_filter "
+              f"{args.corr_filter}: secure rows are already required to be "
+              "alarm-free (correlation NONE), so their tool union is empty and "
+              "every secure target will still be NONE. Use --corr_filter ALL "
+              "to get the intended behaviour.")
 
     os.makedirs(args.out_dir, exist_ok=True)
     db = DBManager()
@@ -755,6 +853,7 @@ def main():
           f"{len({r['cwe'] for r in all_rows})} CWEs "
           f"(multi_label={args.multi_label}, "
           f"corr_filter={args.corr_filter}, "
+          f"secure_target={args.secure_target}, "
           f"min_per_cwe={args.min_per_cwe}, "
           f"exact_per_bucket={args.exact_per_bucket}, "
           f"min_full_per_cwe={args.min_full_per_cwe}, "
@@ -763,11 +862,13 @@ def main():
           f"burp_min_confidence={args.burp_min_confidence})")
 
     train, val, test = stratified_split(all_rows, args.test_frac, args.val_frac)
-    write_jsonl(os.path.join(args.out_dir, "dataset_train.jsonl"), train, multi_label=args.multi_label)
-    write_jsonl(os.path.join(args.out_dir, "dataset_val.jsonl"),   val,   multi_label=args.multi_label)
-    write_jsonl(os.path.join(args.out_dir, "dataset_test.jsonl"),  test,  multi_label=args.multi_label)
+    for name, rows in (("train", train), ("val", val), ("test", test)):
+        write_jsonl(os.path.join(args.out_dir, f"dataset_{name}.jsonl"), rows,
+                    multi_label=args.multi_label,
+                    secure_target=args.secure_target)
 
-    report = {"train": stats(train), "val": stats(val), "test": stats(test)}
+    report = {name: stats(rows, secure_target=args.secure_target)
+              for name, rows in (("train", train), ("val", val), ("test", test))}
     with open(os.path.join(args.out_dir, "dataset_stats.json"), "w") as f:
         json.dump(report, f, indent=2)
     print(json.dumps({k: v["total"] for k, v in report.items()}, indent=2))
