@@ -2,8 +2,30 @@ from json import tool
 import sqlite3
 import os
 import json
+import sys
+from pathlib import Path
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "code_cwe.db")
+
+# sarif_scanners.py lives in the new src/tools/ tree (batch CodeQL/Snyk adapters);
+# the live pipeline and DB accessor still live under project/core. Reach across
+# rather than duplicating the column-mapping logic here.
+_SRC_TOOLS = Path(__file__).resolve().parents[2] / "src" / "tools"
+if str(_SRC_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_SRC_TOOLS))
+
+from sarif_scanners import findings_from_columns, findings_to_columns  # noqa: E402
+
+# Tools persisted via the <tool>_cwes/_raw/_version column triplet (findings_to_columns
+# shape), as opposed to the legacy tools that store one raw-text column (see
+# save_scan_results). Add a new tool here when it starts emitting SARIF-style Findings.
+#
+# "bandit" and "semgrep" here are the NEW structured re-scan (bandit_cwes/_raw/_version,
+# semgrep_cwes/_raw/_version columns) -- distinct from the legacy `bandit`/`semgrep` TEXT
+# columns save_scan_results() still writes. Both are kept: the legacy columns are never
+# touched again (old numbers stay reproducible), the new columns hold the fixed
+# extraction (bandit's structured issue_cwe.id, semgrep's ruleset-tagged findings).
+STRUCTURED_FINDING_TOOLS = frozenset({"codeql", "snyk_code", "bandit", "semgrep"})
 
 class DBManager:
     def __init__(self, db_path=DB_PATH):
@@ -148,6 +170,109 @@ class DBManager:
         cursor.execute(query, (results, id))
         conn.commit()
         conn.close()
+
+    def _ensure_finding_columns(self, tool: str, conn: sqlite3.Connection) -> None:
+        """Add <tool>_cwes/_raw/_version to code_cwe the first time `tool` is saved.
+
+        Additive only -- never touches or drops an existing column, so old data
+        stays intact while a new tool's storage comes online.
+        """
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(code_cwe)")
+        existing = {row[1] for row in cursor.fetchall()}
+        for suffix in ("cwes", "raw", "version"):
+            column = f"{tool}_{suffix}"
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE code_cwe ADD COLUMN {column} TEXT")
+
+    def save_findings(self, code_id: int, tool: str, findings, tool_version: str) -> None:
+        """Persist one sample's Findings for a structured-output tool (CodeQL, Snyk).
+
+        Findings are collapsed into the <tool>_cwes/_raw/_version columns via
+        findings_to_columns (src/tools/sarif_scanners.py) and written to code_cwe --
+        raw tool output stays in the DB, never in a separate file, matching how
+        bandit/semgrep/etc. are already stored.
+
+        `tool_version` is always written, even when `findings` is empty --
+        findings_to_columns() has no version to infer from a clean scan, but a
+        clean scan is still a completed one. Without this, has_scanned() could
+        not tell "scanned, found nothing" apart from "never scanned", and a
+        resumable pipeline would rescan every clean sample forever.
+        """
+        if tool not in STRUCTURED_FINDING_TOOLS:
+            raise ValueError(
+                f"{tool!r} is not a structured-finding tool; "
+                f"expected one of {sorted(STRUCTURED_FINDING_TOOLS)}"
+            )
+        columns = findings_to_columns(findings)
+        columns["version"] = tool_version
+        conn = sqlite3.connect(self.db_path)
+        try:
+            self._ensure_finding_columns(tool, conn)
+            conn.execute(
+                f"UPDATE code_cwe SET {tool}_cwes = ?, {tool}_raw = ?, {tool}_version = ? "
+                "WHERE id = ?",
+                (columns["cwes"], columns["raw"], columns["version"], code_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def has_scanned(self, code_id: int, tool: str) -> bool:
+        """True if `tool` has already recorded a result (clean or not) for this sample.
+
+        Use this for resumability, not `load_findings(...) == []` -- an empty
+        finding list means either "clean scan" or "never scanned", and only the
+        version column (always written by save_findings) tells them apart.
+        """
+        if tool not in STRUCTURED_FINDING_TOOLS:
+            raise ValueError(
+                f"{tool!r} is not a structured-finding tool; "
+                f"expected one of {sorted(STRUCTURED_FINDING_TOOLS)}"
+            )
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(code_cwe)")
+            existing = {row[1] for row in cursor.fetchall()}
+            if f"{tool}_version" not in existing:
+                return False
+            cursor.execute(f"SELECT {tool}_version FROM code_cwe WHERE id = ?", (code_id,))
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        return row is not None and row[0] is not None
+
+    def load_findings(self, code_id: int, tool: str) -> list:
+        """Rebuild Findings for one sample/tool from stored columns.
+
+        Returns [] for both "clean scan" and "never scanned" -- use has_scanned()
+        to tell those apart for resumability; this method is for reading results
+        you already know exist.
+        """
+        if tool not in STRUCTURED_FINDING_TOOLS:
+            raise ValueError(
+                f"{tool!r} is not a structured-finding tool; "
+                f"expected one of {sorted(STRUCTURED_FINDING_TOOLS)}"
+            )
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(code_cwe)")
+            existing = {row[1] for row in cursor.fetchall()}
+            if f"{tool}_raw" not in existing:
+                return []
+            cursor.execute(
+                f"SELECT {tool}_cwes, {tool}_raw, {tool}_version FROM code_cwe WHERE id = ?",
+                (code_id,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return []
+        cwes, raw, version = row
+        return findings_from_columns(str(code_id), tool, cwes, raw, version)
 
     def save_burp_scan_results(self, code_id: int, burp_json: str):
         if not burp_json:

@@ -17,3 +17,5 @@ komutlarım.txt
 notlarım.txt
 CWE_Research
 *code_cwe*
+.venv
+src/tools/codeql

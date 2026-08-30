@@ -67,13 +67,428 @@ def run_semgrep_on_code(code: str, rulesets: default_semgrep_rules) -> str:
         except Exception: pass
 
 def default_semgrep_rules() -> list[str]:
+    # Old config (32/238 project target-CWEs covered, verified against the
+    # actual rule definitions from semgrep.dev/c/p/<name>, not just names).
+    # p/injection 404s -- semgrep.dev/c/p/injection returns HTTP 404 and the
+    # CLI exits 7, which the old error handling below silently `continue`d
+    # past. It has contributed zero rules to every scan ever run with this
+    # list. Left here, commented, as a record rather than deleted.
+    # return [
+    #     "p/owasp-top-ten",
+    #     "p/cwe-top-25",
+    #     "p/python",
+    #     "p/injection",
+    #     "p/sql-injection",
+    # ]
+
+    # New config: 41/238 target CWEs covered, a strict superset of the old
+    # config's coverage (loses nothing, adds CWE-73/94/96/322/523/676/706/
+    # 776/915). p/default alone already subsumes p/python, p/security-audit,
+    # p/cwe-top-25 and p/sql-injection for this project's target CWE list --
+    # verified via greedy set-cover over all 14 plausible candidate packs, so
+    # they add no further ruleset here. p/flask and p/secrets are kept
+    # despite small raw CWE-tag overlap with p/default: Flask-specific rules
+    # catch framework-specific instances a generic rule misses, and hardcoded
+    # credentials are a plausible real issue in LLM-generated demo apps.
+    #
+    # Ceiling to state in the thesis, not chase further: no combination of
+    # public Semgrep packs exceeds ~41/238 (17%) of this project's target CWE
+    # list. Most of A03 (Software Supply Chain) and A10 (Mishandling of
+    # Exceptional Conditions) have zero Python-rule coverage in the registry
+    # under any pack -- a structural SAST blind spot, not a config gap.
     return [
+        "p/default",
         "p/owasp-top-ten",
-        "p/cwe-top-25",
-        "p/python",
-        "p/injection",
-        "p/sql-injection",
+        "p/flask",
+        "p/secrets",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Structured re-scan: bandit's issue_cwe.id + semgrep's ruleset-tagged findings
+# --------------------------------------------------------------------------- #
+#
+# The functions above (run_bandit_on_code, run_semgrep_on_code) regex/metadata
+# -parse straight to a comma-separated CWE string and throw away everything
+# else -- no raw output survives, so the old code_cwe.bandit/.semgrep columns
+# can never be re-scored, only re-scanned. These new functions fix that: they
+# return structured Finding objects (same dataclass sarif_scanners.py uses for
+# CodeQL/Snyk) so save_findings() can persist raw output + version, exactly
+# like the CodeQL/Snyk path, into NEW columns -- the old two are untouched.
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_VENV_BANDIT = _REPO_ROOT / ".venv" / "bin" / "bandit"
+
+
+def _load_finding_class():
+    import sys
+    src_tools = _REPO_ROOT / "src" / "tools"
+    if str(src_tools) not in sys.path:
+        sys.path.insert(0, str(src_tools))
+    from sarif_scanners import Finding
+    return Finding
+
+
+_VENV_SEMGREP = _REPO_ROOT / ".venv" / "bin" / "semgrep"
+
+
+def _bandit_binary() -> str:
+    # The system-wide `bandit` on PATH is 1.6.2, too old for issue_cwe.id
+    # (needs >=1.7.3). The project's own .venv has 1.8.6 -- use it explicitly
+    # rather than relying on PATH order, which silently picks the old one.
+    return str(_VENV_BANDIT) if _VENV_BANDIT.exists() else "bandit"
+
+
+def _semgrep_binary() -> str:
+    # The system-wide `semgrep` (a snap package) is 1.56.0, which rejects
+    # p/default outright: modern registry rules use `severity: CRITICAL`,
+    # a value 1.56.0's schema validator doesn't recognize, so the *entire*
+    # config is refused (exit 7) rather than just that one rule -- confirmed
+    # by reproducing it directly. The venv has 1.142.0, which handles it fine.
+    return str(_VENV_SEMGREP) if _VENV_SEMGREP.exists() else "semgrep"
+
+
+def run_bandit_structured(code: str, sample_id: str):
+    """Run bandit -f json and return (findings, tool_version).
+
+    Reads results[].issue_cwe.id directly (bandit >=1.7.3) instead of
+    regex-matching text output, and keeps test_id/line/severity/confidence
+    per finding -- all of which the old text-based path discarded.
+    """
+    Finding = _load_finding_class()
+    bandit_bin = _bandit_binary()
+
+    version_out = subprocess.run([bandit_bin, "--version"], capture_output=True, text=True)
+    version = (version_out.stdout or version_out.stderr or "unknown").splitlines()[0].strip()
+    version = version.replace("bandit ", "").strip()
+
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
+        tmp.write(code)
+        fname = tmp.name
+
+    findings: list = []
+    try:
+        proc = subprocess.run([bandit_bin, "-f", "json", "-r", fname],
+                               capture_output=True, text=True)
+        # bandit exits 1 when issues are found, 0 when clean; only a crash
+        # (missing binary, bad AST) produces no parseable JSON at all.
+        try:
+            data = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        for result in data.get("results", []):
+            cwe = result.get("issue_cwe") or {}
+            cwe_id = cwe.get("id")
+            findings.append(Finding(
+                sample_id=sample_id,
+                tool="bandit",
+                tool_version=version,
+                cwe_ids=(cwe_id,) if cwe_id else (),
+                rule_id=result.get("test_id", ""),
+                message=result.get("issue_text", ""),
+                line=result.get("line_number"),
+                severity=result.get("issue_severity"),
+                raw=result,
+            ))
+    finally:
+        try:
+            os.remove(fname)
+        except OSError:
+            pass
+    return findings, version
+
+
+_CWE_TAG_RE = re.compile(r"CWE-(\d+)")
+
+
+def run_semgrep_structured(code: str, sample_id: str, rulesets: list[str] | None = None):
+    """Run each semgrep ruleset and return (findings, version, failed_rulesets).
+
+    Each Finding.raw carries which ruleset produced it (the plan's ask:
+    "record which ruleset produced each finding so marginal contribution is
+    reportable"), which the old comma-separated-CWE-string path couldn't.
+    A ruleset that fails to run (bad config, network, exit code outside
+    {0,1}) is returned in `failed_rulesets` instead of being silently
+    dropped -- the caller decides how to record that.
+    """
+    Finding = _load_finding_class()
+    rulesets = [r.strip() for r in (rulesets or default_semgrep_rules()) if r and r.strip()]
+    semgrep_bin = _semgrep_binary()
+
+    version_out = subprocess.run([semgrep_bin, "--version"], capture_output=True, text=True)
+    version = (version_out.stdout or "unknown").strip().splitlines()[-1].strip()
+
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
+        tmp.write(code)
+        fname = tmp.name
+
+    findings: list = []
+    failed_rulesets: list[str] = []
+    try:
+        for ruleset in rulesets:
+            proc = subprocess.run(
+                [semgrep_bin, "--quiet", "--config", ruleset, "--json", fname],
+                capture_output=True, text=True,
+            )
+            if proc.returncode not in (0, 1):
+                failed_rulesets.append(f"{ruleset}: exit {proc.returncode}")
+                continue
+            try:
+                data = json.loads(proc.stdout or "{}")
+            except json.JSONDecodeError:
+                failed_rulesets.append(f"{ruleset}: invalid JSON output")
+                continue
+            if data.get("errors"):
+                # exit 0/1 with a non-empty errors array = partial failure
+                # (some rules didn't run), not "clean" or "no findings".
+                failed_rulesets.append(f"{ruleset}: {len(data['errors'])} rule error(s)")
+
+            for result in data.get("results", []):
+                meta = result.get("extra", {}).get("metadata", {}) or {}
+                cwe_ids = tuple(sorted({
+                    int(m.group(1))
+                    for c in (meta.get("cwe", []) or [])
+                    for m in [_CWE_TAG_RE.search(str(c))] if m
+                }))
+                findings.append(Finding(
+                    sample_id=sample_id,
+                    tool="semgrep",
+                    tool_version=version,
+                    cwe_ids=cwe_ids,
+                    rule_id=result.get("check_id", ""),
+                    message=result.get("extra", {}).get("message", ""),
+                    line=(result.get("start", {}) or {}).get("line"),
+                    severity=meta.get("severity") or result.get("extra", {}).get("severity"),
+                    raw={"ruleset": ruleset, **result},
+                ))
+    finally:
+        try:
+            os.remove(fname)
+        except OSError:
+            pass
+    return findings, version, failed_rulesets
+
+
+def _load_sarif_scanners():
+    import sys
+    src_tools = _REPO_ROOT / "src" / "tools"
+    if str(src_tools) not in sys.path:
+        sys.path.insert(0, str(src_tools))
+    import sarif_scanners
+    return sarif_scanners
+
+
+def run_bandit_batch(samples: list[tuple[str, str]]):
+    """Run bandit once over a whole staged batch directory instead of once
+    per file. The per-sample run_bandit_structured() above measured ~1
+    sample/several-seconds when run one file at a time across 13,634 samples
+    -- the same fixed-per-invocation-overhead problem CodeQL had, just from
+    process startup rather than query compilation. Batching cuts 13,634
+    invocations down to ~28 (batch_size=500).
+
+    Returns ({sample_id: [Finding, ...]}, tool_version, syntax_error_ids).
+
+    `syntax_error_ids` lists samples bandit's own `errors` array reported as
+    unparseable (real, confirmed against Python's own compile() on a sample --
+    genuinely malformed generated code, e.g. a missing paren around a
+    triple-quoted string argument). The caller must NOT call save_findings()
+    for these: an empty finding list would misreport "bandit ran and found
+    nothing" when what actually happened is "bandit couldn't parse this file
+    at all" -- leaving them unscanned (has_scanned() stays False) keeps that
+    distinction rather than silently recording a false negative.
+    """
+    sarif_scanners = _load_sarif_scanners()
+    Finding = _load_finding_class()
+    bandit_bin = _bandit_binary()
+
+    version_out = subprocess.run([bandit_bin, "--version"], capture_output=True, text=True)
+    version = (version_out.stdout or version_out.stderr or "unknown").splitlines()[0]
+    version = version.replace("bandit ", "").strip()
+
+    findings_by_sample: dict[str, list] = {sid: [] for sid, _ in samples}
+    with tempfile.TemporaryDirectory(prefix="bandit_batch_") as tmp:
+        batch_dir = Path(tmp) / "src"
+        sarif_scanners.stage_batch(samples, batch_dir)
+        # -q suppresses the progress bar bandit prints on stdout for batches
+        # large enough to take a couple of seconds -- without it, "Working...
+        # <bar> 100% 0:00:02\n" is prepended before the JSON, so json.loads()
+        # fails and every finding in the batch is silently lost. Confirmed by
+        # reproducing directly: identical run without -q produced 0 results
+        # over 500 real samples that in fact had 908.
+        proc = subprocess.run([bandit_bin, "-q", "-f", "json", "-r", str(batch_dir)],
+                               capture_output=True, text=True)
+        try:
+            data = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            data = {}
+
+    syntax_error_ids = {
+        sarif_scanners.sample_id_from_staged_name(e.get("filename", ""))
+        for e in data.get("errors", [])
+    }
+    syntax_error_ids.discard(None)
+
+    for result in data.get("results", []):
+        sample_id = sarif_scanners.sample_id_from_staged_name(result.get("filename", ""))
+        if sample_id is None or sample_id not in findings_by_sample:
+            continue
+        cwe = result.get("issue_cwe") or {}
+        cwe_id = cwe.get("id")
+        findings_by_sample[sample_id].append(Finding(
+            sample_id=sample_id,
+            tool="bandit",
+            tool_version=version,
+            cwe_ids=(cwe_id,) if cwe_id else (),
+            rule_id=result.get("test_id", ""),
+            message=result.get("issue_text", ""),
+            line=result.get("line_number"),
+            severity=result.get("issue_severity"),
+            raw=result,
+        ))
+    return findings_by_sample, version, syntax_error_ids
+
+
+def run_semgrep_batch(samples: list[tuple[str, str]], rulesets: list[str] | None = None):
+    """Batched counterpart to run_semgrep_structured -- one invocation per
+    (batch, ruleset) instead of per (sample, ruleset), attributing results
+    back by the staged filename in each result's `path` field.
+
+    Returns ({sample_id: [Finding, ...]}, tool_version, failed_rulesets).
+    """
+    sarif_scanners = _load_sarif_scanners()
+    Finding = _load_finding_class()
+    semgrep_bin = _semgrep_binary()
+    rulesets = [r.strip() for r in (rulesets or default_semgrep_rules()) if r and r.strip()]
+
+    version_out = subprocess.run([semgrep_bin, "--version"], capture_output=True, text=True)
+    version = (version_out.stdout or "unknown").strip().splitlines()[-1].strip()
+
+    findings_by_sample: dict[str, list] = {sid: [] for sid, _ in samples}
+    failed_rulesets: list[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="semgrep_batch_") as tmp:
+        batch_dir = Path(tmp) / "src"
+        sarif_scanners.stage_batch(samples, batch_dir)
+
+        for ruleset in rulesets:
+            proc = subprocess.run(
+                [semgrep_bin, "--quiet", "--config", ruleset, "--json", str(batch_dir)],
+                capture_output=True, text=True,
+            )
+            if proc.returncode not in (0, 1):
+                failed_rulesets.append(f"{ruleset}: exit {proc.returncode}")
+                continue
+            try:
+                data = json.loads(proc.stdout or "{}")
+            except json.JSONDecodeError:
+                failed_rulesets.append(f"{ruleset}: invalid JSON output")
+                continue
+            if data.get("errors"):
+                failed_rulesets.append(f"{ruleset}: {len(data['errors'])} rule error(s)")
+
+            for result in data.get("results", []):
+                sample_id = sarif_scanners.sample_id_from_staged_name(result.get("path", ""))
+                if sample_id is None or sample_id not in findings_by_sample:
+                    continue
+                meta = result.get("extra", {}).get("metadata", {}) or {}
+                cwe_ids = tuple(sorted({
+                    int(m.group(1))
+                    for c in (meta.get("cwe", []) or [])
+                    for m in [_CWE_TAG_RE.search(str(c))] if m
+                }))
+                findings_by_sample[sample_id].append(Finding(
+                    sample_id=sample_id,
+                    tool="semgrep",
+                    tool_version=version,
+                    cwe_ids=cwe_ids,
+                    rule_id=result.get("check_id", ""),
+                    message=result.get("extra", {}).get("message", ""),
+                    line=(result.get("start", {}) or {}).get("line"),
+                    severity=meta.get("severity") or result.get("extra", {}).get("severity"),
+                    raw={"ruleset": ruleset, **result},
+                ))
+    return findings_by_sample, version, failed_rulesets
+
+
+def _fetch_code_samples(db, code_ids: list[int]) -> list[tuple[str, str]]:
+    samples = []
+    for code_id in code_ids:
+        code = db.get_code(code_id)
+        code = code[0] if isinstance(code, tuple) else code
+        if code:
+            samples.append((str(code_id), code))
+        else:
+            print(f"SKIP id={code_id}: no code")
+    return samples
+
+
+def rescan_bandit_semgrep(
+    *,
+    id_list: list[int] | None = None,
+    docker_status: str = "tested-successful",
+    batch_size: int = 500,
+    run_bandit: bool = True,
+    run_semgrep: bool = True,
+    db=None,
+) -> None:
+    """Re-scan stored source with the fixed bandit/semgrep extraction, batched.
+
+    Resumable via DBManager.has_scanned(); persists into the new
+    bandit_cwes/_raw/_version and semgrep_cwes/_raw/_version columns via
+    save_findings(). Never touches the legacy code_cwe.bandit/.semgrep TEXT
+    columns -- those stay exactly as they are.
+
+    `db=None` uses the real project/core/code_cwe.db; pass a scratch
+    DBManager to test safely first.
+    """
+    if db is None:
+        from core import db_handler
+        db = db_handler.DBManager()
+    sarif_scanners = _load_sarif_scanners()
+
+    code_ids = sorted(id_list) if id_list is not None else db.get_ids_by_docker_status(docker_status)
+
+    if run_bandit:
+        pending = [cid for cid in code_ids if not db.has_scanned(cid, "bandit")]
+        samples = _fetch_code_samples(db, pending)
+        all_syntax_errors: set[str] = set()
+        for batch in sarif_scanners.batched(samples, batch_size):
+            findings_by_sample, version, syntax_error_ids = run_bandit_batch(batch)
+            for sample_id, findings in findings_by_sample.items():
+                if sample_id in syntax_error_ids:
+                    continue  # leave unscanned -- see run_bandit_batch's docstring
+                db.save_findings(int(sample_id), "bandit", findings, tool_version=version)
+            all_syntax_errors |= syntax_error_ids
+            print(f"bandit: batch of {len(batch)} -> "
+                  f"{sum(len(f) for f in findings_by_sample.values())} findings, "
+                  f"{len(syntax_error_ids)} unparseable")
+        if all_syntax_errors:
+            print(f"bandit: {len(all_syntax_errors)} samples had genuinely invalid Python "
+                  f"syntax (confirmed against Python's own compile()), left unscanned: "
+                  f"{sorted(all_syntax_errors, key=int)[:20]}"
+                  f"{' ...' if len(all_syntax_errors) > 20 else ''}")
+
+    if run_semgrep:
+        pending = [cid for cid in code_ids if not db.has_scanned(cid, "semgrep")]
+        samples = _fetch_code_samples(db, pending)
+        semgrep_rulesets = default_semgrep_rules()
+        all_failed_rulesets: dict[str, int] = {}
+        for batch in sarif_scanners.batched(samples, batch_size):
+            findings_by_sample, version, failed = run_semgrep_batch(batch, semgrep_rulesets)
+            for sample_id, findings in findings_by_sample.items():
+                db.save_findings(int(sample_id), "semgrep", findings, tool_version=version)
+            for f in failed:
+                ruleset_name = f.split(":")[0]
+                all_failed_rulesets[ruleset_name] = all_failed_rulesets.get(ruleset_name, 0) + 1
+            print(f"semgrep: batch of {len(batch)} -> "
+                  f"{sum(len(f) for f in findings_by_sample.values())} findings")
+        if all_failed_rulesets:
+            print("Semgrep ruleset failures during this run (recorded, not silently dropped):")
+            for ruleset, count in sorted(all_failed_rulesets.items(), key=lambda kv: -kv[1]):
+                print(f"  {ruleset}: failed on {count} batch(es)")
+
+    print(f"rescan_bandit_semgrep: {len(code_ids)} samples in scope.")
+
 
 ##! Part for Sonarqube and necessary functions
 
@@ -350,3 +765,87 @@ def sast_scan(
 
         print(f"id={code_id} bandit={b} semgrep={s} sonar={q}")
     print("SAST analysis completed.")
+
+
+def _load_sarif_scanners():
+    """sarif_scanners.py lives under src/tools/, outside the project/ tree."""
+    import sys
+    src_tools = Path(__file__).resolve().parents[2] / "src" / "tools"
+    if str(src_tools) not in sys.path:
+        sys.path.insert(0, str(src_tools))
+    import sarif_scanners
+    return sarif_scanners
+
+
+def batch_sast_scan(
+    *,
+    id_list: list[int] | None = None,
+    docker_status: str = "tested-successful",
+    batch_size: int = 500,
+    run_codeql: bool = True,
+    run_snyk: bool = True,
+    codeql_bin: str = "codeql",
+    snyk_bin: str = "snyk",
+    db=None,
+) -> None:
+    """Batch-scan docker-successful samples with CodeQL and/or Snyk Code.
+
+    Both tools amortize a large fixed per-invocation cost across many samples
+    (see src/tools/sarif_scanners.py) so, unlike bandit/semgrep, samples are
+    staged and scanned in batches rather than one at a time -- running this
+    corpus through CodeQL one sample at a time would take ~75h instead of well
+    under one.
+
+    Resumable via DBManager.has_scanned(): a sample already recorded for a tool
+    (clean or not) is left out of that tool's next batch, so results and raw
+    output stay in code_cwe.db and re-running only picks up what's left.
+
+    `db` takes an existing DBManager (e.g. pointed at a scratch DB for testing);
+    defaults to the real project/core/code_cwe.db only when omitted.
+    """
+    sarif_scanners = _load_sarif_scanners()
+    if db is None:
+        from core import db_handler
+        db = db_handler.DBManager()
+
+    code_ids = sorted(id_list) if id_list is not None else db.get_ids_by_docker_status(docker_status)
+
+    adapters = []
+    if run_codeql:
+        adapters.append(("codeql", sarif_scanners.CodeQLBatchAdapter(codeql_bin=codeql_bin)))
+    if run_snyk:
+        adapters.append(("snyk_code", sarif_scanners.SnykCodeBatchAdapter(snyk_bin=snyk_bin)))
+
+    for tool, adapter in adapters:
+        pending_ids = [cid for cid in code_ids if not db.has_scanned(cid, tool)]
+        if not pending_ids:
+            print(f"SKIP {tool}: nothing pending")
+            continue
+
+        samples: list[tuple[str, str]] = []
+        for code_id in pending_ids:
+            code = db.get_code(code_id)
+            code = code[0] if isinstance(code, tuple) else code
+            if not code:
+                print(f"SKIP {tool}: id={code_id} has no code")
+                continue
+            samples.append((str(code_id), code))
+
+        by_sample: dict[str, list] = {sample_id: [] for sample_id, _ in samples}
+        scanned_ids: set[str] = set()
+        for batch in sarif_scanners.batched(samples, batch_size):
+            try:
+                findings = adapter.scan_batch(batch)
+            except sarif_scanners.ScanError as e:
+                print(f"{tool}: batch of {len(batch)} FAILED, left as not-scanned: {e}")
+                continue
+            for f in findings:
+                by_sample.setdefault(f.sample_id, []).append(f)
+            scanned_ids.update(sample_id for sample_id, _ in batch)
+            print(f"{tool}: batch of {len(batch)} -> {len(findings)} findings")
+
+        version = adapter.version
+        for sample_id in scanned_ids:
+            db.save_findings(int(sample_id), tool, by_sample[sample_id], tool_version=version)
+
+        print(f"{tool}: {len(scanned_ids)}/{len(samples)} samples scanned and saved")

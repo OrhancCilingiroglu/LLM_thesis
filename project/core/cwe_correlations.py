@@ -22,6 +22,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from typing import Dict, Iterable, List, Set, Tuple
@@ -90,11 +91,52 @@ def safe_json(raw):
 # ---------------------------------------------------------------------------
 
 def parse_sast_cwes(raw) -> Set[str]:
-    """Extract CWE ids from comma-separated SAST output (bandit/semgrep/sonarqube)."""
+    """Extract CWE ids from comma-separated SAST output (bandit/semgrep).
+
+    Does NOT work for sonarqube -- see parse_sonarqube_cwes. sonarqube's
+    column is a compound descriptive string ("security: tags=CWE-352;
+    issues=0; hotspots=- [app.py:5] ...: Make sure disabling CSRF ..."), not
+    a plain comma list, so splitting it on "," and normalizing each token
+    almost always fails to parse as an integer and silently returns nothing.
+    Confirmed against real data: 11,764/13,634 docker-successful rows carry
+    a real tags=CWE-XXX value that this function returns an empty set for.
+    """
     found: Set[str] = set()
     if not raw:
         return found
     for item in str(raw).split(","):
+        c = normalize_cwe(item)
+        if c is not None:
+            found.add(c)
+    return found
+
+
+_SONARQUBE_TAGS_RE = re.compile(r"tags\s*=\s*([^;]*)")
+
+
+def parse_sonarqube_cwes(raw) -> Set[str]:
+    """Extract CWE ids from sonarqube's `tags=CWE-XX[,CWE-YY...]; issues=...`
+    summary string (see run_sonarqube_on_code in logic/sast_pipeline.py).
+
+    Every sample observed so far carries exactly one tag, CWE-352 (CSRF) --
+    consistent with build_dataset.py's documented warning that "absent CSRF
+    tokens attach to nearly every row" (these are minimal single-file Flask
+    apps with no CSRF framework wired in). That makes it look like a
+    near-constant predictor, but it is still a correct fix: it only credits
+    sonarqube on samples whose *target* CWE actually is 352 (48 in the
+    current corpus) or a hierarchy relative of it -- it cannot produce a
+    false match against an unrelated target CWE just by being common.
+    """
+    found: Set[str] = set()
+    if not raw:
+        return found
+    match = _SONARQUBE_TAGS_RE.search(str(raw))
+    if not match:
+        return found
+    tags_field = match.group(1).strip()
+    if not tags_field or tags_field.lower() in PLACEHOLDERS:
+        return found
+    for item in tags_field.split(","):
         c = normalize_cwe(item)
         if c is not None:
             found.add(c)
