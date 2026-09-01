@@ -224,7 +224,14 @@ def compute_hierarchy_matches(
 # Reporting: strict vs relaxed detection rate, per tool and per OWASP category
 # --------------------------------------------------------------------------- #
 
-RELAXED_MATCH = frozenset({"exact", "ancestor", "descendant", "sibling"})
+RELAXED_MATCH = frozenset({"exact", "ancestor", "descendant"})
+# "sibling" (reported CWE shares the target's direct parent but is neither
+# its ancestor nor descendant, e.g. reporting CWE-79 XSS when the target is
+# CWE-89 SQLi -- both children of CWE-74) was excluded on user review: a
+# sibling report names a genuinely different weakness that merely happens to
+# live in the same family. Crediting it as "relaxed match" would count a
+# wrong answer as partial credit; only classifications that actually
+# subsume or specialize the target CWE count.
 
 
 def strict_vs_relaxed_report(db_path: str | None = None, docker_status: str = "tested-successful") -> str:

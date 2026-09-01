@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import argparse
+import sqlite3
 from dotenv import load_dotenv
 from zapv2 import ZAPv2
 import re
@@ -90,6 +91,93 @@ def owasp_zap_scan(port, chosenpolicy):
         print(f"[{alert['risk']}] {alert['alert']} - {alert['url']}")
     return alerts
 
+
+def build_zap_auth_context(zap, target, auth_candidate, context_name):
+    """Wire a ZAP context for form-based auth from one auth_candidates row.
+
+    ZAP's form-based auth uses two layers of naming that must not be
+    confused: `loginRequestData` uses the SITE's own form field names (e.g.
+    "username", but could be "user" or "email" -- read from the sample's
+    actual code, not assumed) on the left of each `=`, with ZAP's own fixed
+    `{%username%}`/`{%password%}` placeholders on the right. The actual
+    credential values are set separately via set_authentication_credentials
+    using those same fixed "username"/"password" keys, regardless of what
+    the site calls its fields. Mixing these up silently produces a login
+    POST that submits the literal string "{%username%}" instead of a real
+    value.
+    """
+    context_id = zap.context.new_context(context_name)
+    zap.context.include_in_context(context_name, re.escape(target) + ".*")
+
+    login_url = target.rstrip("/") + auth_candidate["login_path"]
+    login_request_data = (
+        f"{auth_candidate['username_field']}={{%username%}}"
+        f"&{auth_candidate['password_field']}={{%password%}}"
+    )
+    zap.authentication.set_authentication_method(
+        context_id, "formBasedAuthentication",
+        f"loginUrl={login_url}&loginRequestData={login_request_data}",
+    )
+
+    user_id = zap.users.new_user(context_id, "auth_user")
+    zap.users.set_authentication_credentials(
+        context_id, user_id,
+        f"username={auth_candidate['username']}&password={auth_candidate['password']}",
+    )
+    zap.users.set_user_enabled(context_id, user_id, "true")
+    return context_id, user_id
+
+
+def owasp_zap_scan_authenticated(port, chosenpolicy, auth_candidate):
+    """Same as owasp_zap_scan, but spiders and actively scans as a logged-in
+    user via ZAP's scan_as_user (built from a project/core/build_auth_candidates.py
+    row) instead of anonymously. Without this, samples that gate their real
+    functionality behind a login expose almost no surface to ZAP -- see
+    changes_summary.md's ZAP entry for why this matters for A01.
+    """
+    zap = ZAPv2(apikey=zap_key, proxies={'http':'http://127.0.0.1:8080', 'https':'http://127.0.0.1:8080'})
+    target = f"http://localhost:{port}"
+
+    try:
+        zap.urlopen(target)
+    except Exception as e:
+        print(f"WARN: ZAP urlopen failed (likely redirect loop), continuing anyway: {e}")
+    time.sleep(3)
+
+    context_name = f"auth_ctx_{port}"
+    context_id, user_id = build_zap_auth_context(zap, target, auth_candidate, context_name)
+
+    try:
+        print(f"[+] Authenticated spider starting (context={context_id}, user={user_id})...")
+        scan_id = zap.spider.scan_as_user(context_id, user_id, target)
+        while int(zap.spider.status(scan_id)) < 100:
+            print(f"Auth spider %{zap.spider.status(scan_id)}")
+            time.sleep(5)
+        print("[+] Authenticated spider completed.")
+
+        print('[+] Authenticated active scan starting...')
+        scan_id = zap.ascan.scan_as_user(
+            url=target, contextid=context_id, userid=user_id, scanpolicyname=chosenpolicy
+        )
+        while int(zap.ascan.status(scan_id)) < 100:
+            print(f"Auth active scan %{zap.ascan.status(scan_id)}")
+            time.sleep(1)
+        print("[+] Authenticated active scan completed.")
+
+        print('Security Alerts (authenticated):')
+        alerts = zap.core.alerts(baseurl=target)
+        for alert in alerts:
+            print(f"[{alert['risk']}] {alert['alert']} - {alert['url']}")
+        return alerts
+    finally:
+        # Contexts persist in the ZAP session across calls; remove ours so
+        # they don't pile up (and collide by name) across thousands of samples.
+        try:
+            zap.context.remove_context(context_name)
+        except Exception:
+            pass
+
+
 def build_and_zap(id, chosenpolicy):
     code, dockerfile, sql_script, port_temp, reqs, docker = db.get_files_by_id(id)
     if docker != "tested-successful":
@@ -116,7 +204,13 @@ def build_and_zap(id, chosenpolicy):
         if not dm.run_container():
             print(f"FAIL: code_id={id} container didn't start, skipping ZAP")
             return None
-        alerts = owasp_zap_scan(port_temp, chosenpolicy)
+        auth_candidate = db.get_auth_candidate(id)
+        if auth_candidate:
+            print(f"[+] code_id={id}: login flow detected ({auth_candidate['login_path']}), "
+                  f"scanning authenticated")
+            alerts = owasp_zap_scan_authenticated(port_temp, chosenpolicy, auth_candidate)
+        else:
+            alerts = owasp_zap_scan(port_temp, chosenpolicy)
     except Exception as e:
         traceback.print_exc()
         print(f"FAIL: code_id={id} owasp zap error: {e}")
@@ -133,6 +227,56 @@ def build_and_zap(id, chosenpolicy):
         except Exception:
             pass
     return json.dumps(alerts, ensure_ascii=False)
+
+
+def rescan_authenticated_zap(id_list, chosenpolicy="API", db_manager=None):
+    """Re-scan samples with authentication via build_and_zap(), bypassing
+    dast_scan()'s pending check -- deliberately, since most auth_candidates
+    already have old *unauthenticated* owasp_zap data and dast_scan treats
+    "has any zap data" as "already scanned". Saves into the new
+    owasp_zap_authenticated column (save_authenticated_zap_result), never
+    touching the legacy owasp_zap column.
+
+    Resumable on its own: skips ids that already have
+    owasp_zap_authenticated set, so an interrupted run can just be called
+    again with the same id_list.
+
+    `db_manager=None` uses the real project/core/code_cwe.db; pass an
+    instance pointed at a scratch DB to test safely first.
+    """
+    if db_manager is None:
+        db_manager = db
+
+    conn_check = sqlite3.connect(db_manager.db_path)
+    cols = {row[1] for row in conn_check.execute("PRAGMA table_info(code_cwe)").fetchall()}
+    if "owasp_zap_authenticated" in cols:
+        placeholders = ",".join("?" * len(id_list))
+        already = {
+            row[0] for row in conn_check.execute(
+                f"SELECT id FROM code_cwe WHERE id IN ({placeholders}) "
+                "AND owasp_zap_authenticated IS NOT NULL",
+                id_list,
+            ).fetchall()
+        }
+    else:
+        already = set()
+    conn_check.close()
+    pending = [cid for cid in id_list if cid not in already]
+
+    print(f"[AUTH ZAP] {len(already)} already done, {len(pending)} pending")
+    completed = 0
+    for code_id in pending:
+        alerts_json = build_and_zap(code_id, chosenpolicy)
+        if alerts_json is None:
+            print(f"[AUTH ZAP] SKIP code_id={code_id}: build/run failed")
+            continue
+        db_manager.save_authenticated_zap_result(code_id, alerts_json)
+        completed += 1
+        if completed % 25 == 0:
+            docker_handler.DockerManager.prune_dangling_images()
+            docker_handler.DockerManager.prune_build_cache()
+    print(f"[AUTH ZAP] Done: {completed}/{len(pending)} scanned and saved.")
+
 
 #nikto kullanacaksan output aldıktan sonraki kısmını da ekle
 def nikto_scan(targetport, outputname):

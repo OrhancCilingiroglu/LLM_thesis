@@ -1,4 +1,5 @@
 from core.db_handler import DBManager
+from core.cwe_correlations import parse_sonarqube_cwes
 import json
 import sqlite3
 from collections import defaultdict, Counter
@@ -96,8 +97,11 @@ def parse_zap_cwes(zap_raw) -> set:
     return found
 
 
-def build_detection_db():
-    source_db = DBManager()
+def build_detection_db(source_db=None):
+    """`source_db=None` uses the real project/core/code_cwe.db; pass a
+    DBManager pointed at a scratch DB to test safely first."""
+    if source_db is None:
+        source_db = DBManager()
     successful_ids = source_db.get_ids_by_docker_status("tested-successful")
 
     cwe_data = defaultdict(lambda: {
@@ -168,7 +172,7 @@ def build_detection_db():
 
         bandit_cwes    = parse_sast_cwes(bandit_raw)
         semgrep_cwes   = parse_sast_cwes(semgrep_raw)
-        sonarqube_cwes = parse_sast_cwes(sonarqube_raw)
+        sonarqube_cwes = parse_sonarqube_cwes(sonarqube_raw)
         zap_cwes       = parse_zap_cwes(zap_raw)
 
         hit_bandit    = db_cwe in bandit_cwes

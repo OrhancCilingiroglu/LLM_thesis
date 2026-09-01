@@ -328,11 +328,25 @@ BURP_TYPE_TO_CWE = {
 8389376	:["CWE-16","CWE-436"],
 8389632	:["CWE-16","CWE-436"],
 8389888	:["CWE-16"],
-16777472 :	["CWE-295","CWE-326","CWE-327"], 
+16777472 :	["CWE-295","CWE-326","CWE-327"],
 16777728 :	["CWE-326"],
 16777984 :	["CWE-523"],
 16778240 :	["CWE-16","CWE-319"],
-16778496 :	["CWE-912"]
+16778496 :	["CWE-912"],
+# The two entries below were missing, found by cross-checking against the
+# full 180-entry official issue-type list embedded in the installed
+# burpsuite_pro.jar (2026.2.3) -- resources/BuiltInConfigs/*.json, which
+# stores every known type_index in hex. Confirmed against multiple presets.
+# Both are generic "extension-reported issue" category markers (they only
+# appear in the "Audit checks - extensions only" preset, not any
+# native-check preset), so no single CWE applies -- mapped to an empty
+# list, matching the existing convention for recognized-but-unmapped types
+# (see 2098438/2098441/2098448/2098449/2098768/2099458-2099461 above).
+# Before this fix, build_and_burp() would silently discard any finding
+# under these two type_index values entirely (KeyError -> treated as
+# unmapped -> dropped) rather than recording it with no CWE.
+134217728 : [],   # 0x08000000 - generic extension-reported issue
+150994944 : [],   # 0x09000000 - generic extension-reported issue
 }
 #* Those configurations are set in burpsuite configuration library manually
 #* According to issue list above.

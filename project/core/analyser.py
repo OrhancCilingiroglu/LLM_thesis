@@ -1,4 +1,5 @@
 from core.db_handler import DBManager
+from core.cwe_correlations import parse_sonarqube_cwes
 import json
 from collections import Counter, defaultdict
 from utils import OWASP
@@ -96,7 +97,7 @@ def analyze_cwe_correlation(db_cwe, bandit_out, semgrep_out, sonarqube_out, dast
 
     bandit_cwes    = parse_sast_cwes(bandit_out)
     semgrep_cwes   = parse_sast_cwes(semgrep_out)
-    sonarqube_cwes = parse_sast_cwes(sonarqube_out)
+    sonarqube_cwes = parse_sonarqube_cwes(sonarqube_out)
     sast_cwes      = bandit_cwes | semgrep_cwes | sonarqube_cwes
 
     burpsuite_found = normalize_burpsuite(burpsuite_raw)

@@ -89,6 +89,53 @@ class DBManager:
         conn.close()
         print(f"SUCCESS: Updated docker status: {status} (ID: {code_id})")
 
+    def update_docker_recheck(self, code_id: int, status: str):
+        """Record a *re-verification* build/run/HTTP-response result without
+        touching the original `docker` column -- environment drift (library
+        versions, base images) since a sample was first marked
+        'tested-successful' means a live re-check can legitimately disagree
+        with the historical value, and the historical value must stay
+        reproducible. Use docker_pipeline.docker_scan_parallel(...,
+        update_status=this, skip_already_tested=False) to reuse the existing
+        build+run+HTTP-check+cleanup logic for the recheck itself.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(code_cwe)")
+        if "docker_recheck" not in {row[1] for row in cursor.fetchall()}:
+            cursor.execute("ALTER TABLE code_cwe ADD COLUMN docker_recheck TEXT")
+        cursor.execute(
+            "UPDATE code_cwe SET docker_recheck = ? WHERE id = ?", (status, code_id)
+        )
+        conn.commit()
+        conn.close()
+
+    def save_authenticated_zap_result(self, code_id: int, alerts_json: str):
+        """Store a ZAP scan run *with* authentication in a new column,
+        separate from the legacy `owasp_zap` column.
+
+        Most auth_candidates samples already have old unauthenticated
+        `owasp_zap` data from the original corpus-wide DAST pass -- dast_scan's
+        pending check treats "has any zap data" as "already scanned" and
+        skips it, so re-scanning these with authentication needs to bypass
+        that check (call build_and_zap directly) and land somewhere that
+        doesn't overwrite the historical value, same reasoning as
+        update_docker_recheck: the old unauthenticated result and the new
+        authenticated one are both legitimate data points worth keeping
+        side by side for comparison.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(code_cwe)")
+        if "owasp_zap_authenticated" not in {row[1] for row in cursor.fetchall()}:
+            cursor.execute("ALTER TABLE code_cwe ADD COLUMN owasp_zap_authenticated TEXT")
+        cursor.execute(
+            "UPDATE code_cwe SET owasp_zap_authenticated = ? WHERE id = ?",
+            (alerts_json, code_id),
+        )
+        conn.commit()
+        conn.close()
+
     def get_code(self, code_id =int):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -273,6 +320,38 @@ class DBManager:
             return []
         cwes, raw, version = row
         return findings_from_columns(str(code_id), tool, cwes, raw, version)
+
+    def get_auth_candidate(self, code_id: int) -> dict | None:
+        """Return the login-route + seeded-credential info for this sample,
+        if project/core/build_auth_candidates.py detected one, else None.
+
+        Callers must not assume every sample has a login flow -- most don't
+        (checked: 1,999/13,634 docker-successful samples, 14.7%). Absence
+        here means either no login route, or one that only stores a
+        password hash (unusable for a live login).
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='auth_candidates'"
+            )
+            if cursor.fetchone() is None:
+                return None
+            cursor.execute(
+                "SELECT login_path, username_field, password_field, username, password "
+                "FROM auth_candidates WHERE code_id = ?",
+                (code_id,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        return {
+            "login_path": row[0], "username_field": row[1], "password_field": row[2],
+            "username": row[3], "password": row[4],
+        }
 
     def save_burp_scan_results(self, code_id: int, burp_json: str):
         if not burp_json:

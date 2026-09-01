@@ -90,6 +90,7 @@ import os, re, json, sqlite3, hashlib, random, argparse
 from collections import defaultdict, Counter
 from core.db_handler import DBManager
 from core.cwe_summary import cwe_to_owasp, parse_sast_cwes, parse_zap_cwes  # reuse
+from core.cwe_correlations import parse_sonarqube_cwes  # reuse
 
 RNG = random.Random(42)
 
@@ -297,7 +298,7 @@ def per_tool_cwes(db: DBManager, code_id: int, sast_row, dast_row,
     return {
         "bandit":    parse_sast_cwes(sast_row[1] if sast_row and len(sast_row) > 1 else ""),
         "semgrep":   parse_sast_cwes(sast_row[2] if sast_row and len(sast_row) > 2 else ""),
-        "sonarqube": parse_sast_cwes(sast_row[3] if sast_row and len(sast_row) > 3 else ""),
+        "sonarqube": parse_sonarqube_cwes(sast_row[3] if sast_row and len(sast_row) > 3 else ""),
         "zap":       parse_zap_cwes(dast_row[1] if dast_row and len(dast_row) > 1 else None),
         "burpsuite": fetch_burp_cwes_from_db(db.db_path, code_id,
                                              min_confidence=burp_min_confidence),

@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import shutil
+import subprocess
 
 class FileManager:
     def __init__(self, base_dir=None):
@@ -44,9 +45,38 @@ class FileManager:
 
     def remove_files(self, code_id):
         workdir = os.path.join(self.base_dir, f"app_{code_id}")
-        if os.path.exists(workdir):
-            try:
-                shutil.rmtree(workdir)
-                print(f"[+] Removed directory: {workdir}")
-            except Exception as e:
-                print(f"[!] Failed to remove directory {workdir}: {e}")
+        if not os.path.exists(workdir):
+            return
+        try:
+            shutil.rmtree(workdir)
+            print(f"[+] Removed directory: {workdir}")
+            return
+        except Exception as e:
+            print(f"[!] Failed to remove directory {workdir}: {e} -- retrying via Docker")
+
+        # Containerized apps (e.g. Flask-Session writing to disk) create files
+        # owned by root inside the bind-mounted workdir; the host user can't
+        # delete them, and shutil.rmtree above just fails on that subtree.
+        # A throwaway container's root user has the same UID (0) that wrote
+        # them, so it can remove what the host user can't -- confirmed this
+        # was silently leaving ~86 leftover app_data/app_<id> directories
+        # (2.7 MB) after sql-failed runs, and in the worse case (Flask-Session
+        # apps) blocked the *next* build outright with a PermissionError from
+        # Docker's own build-context tar step, since it can't even read a
+        # root-owned file to package it.
+        try:
+            # `rm -rf /cleanup` (the mount point itself) fails with "Resource
+            # busy" from inside the container -- confirmed by reproducing it
+            # directly. Clear the mount's *contents* as root instead (find
+            # -delete, not a `*` glob, so dotfiles/dot-directories aren't
+            # left behind), then remove the now-empty, host-owned top-level
+            # directory the normal way.
+            subprocess.run(
+                ["docker", "run", "--rm", "-v", f"{workdir}:/cleanup", "alpine",
+                 "find", "/cleanup", "-mindepth", "1", "-delete"],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+            shutil.rmtree(workdir)
+            print(f"[+] Removed directory via Docker fallback: {workdir}")
+        except Exception as e2:
+            print(f"[!] Docker fallback also failed to remove {workdir}: {e2}")

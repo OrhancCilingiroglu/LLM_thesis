@@ -61,10 +61,12 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 # ---------------------------------------------------------------------------
 try:
     from core.db_handler import DBManager
+    from core.cwe_correlations import parse_sonarqube_cwes
 except ImportError:                                    # pragma: no cover
     # Fallback for running outside the project (e.g. unit tests). The
     # dataset-side analysis simply will not work in that case.
     DBManager = None                                   # type: ignore
+    parse_sonarqube_cwes = None                         # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +268,7 @@ def extract_dataset_cwe_sets(
         cwe_set: Set[str] = set()
         cwe_set |= parse_sast_cwes(bandit)
         cwe_set |= parse_sast_cwes(semgrep)
-        cwe_set |= parse_sast_cwes(sonarqube)
+        cwe_set |= parse_sonarqube_cwes(sonarqube)
         cwe_set |= parse_zap_cwes(zap)
 
         # BurpSuite stores only "found"/"not-found" relative to the

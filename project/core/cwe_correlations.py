@@ -258,7 +258,7 @@ def collect_detections(
         detected: Set[str] = set()
         detected |= parse_sast_cwes(row["bandit"])
         detected |= parse_sast_cwes(row["semgrep"])
-        detected |= parse_sast_cwes(row["sonarqube"])
+        detected |= parse_sonarqube_cwes(row["sonarqube"])
         detected |= parse_zap_cwes(row["owasp_zap"])
         detected |= burp_map.get(row["id"], set())
 
