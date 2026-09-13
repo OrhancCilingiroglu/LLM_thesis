@@ -17,6 +17,16 @@ import time
 load_dotenv()
 sonar_token = os.getenv("usertoken")
 
+# Semgrep's default `-j`/`--jobs` is `os.cpu_count()` (12 on this machine) --
+# each worker is a separate `semgrep-core` process with its own copy of the
+# compiled ruleset in memory (~1GB/worker observed with this project's
+# rulesets, not shared across processes), so the default caused 12 workers x
+# ~1GB = ~12GB, swap-thrashing a 15GB/4GB-swap machine into a hang/crash
+# (2026-09-12, changes_summary.md). Capped low deliberately -- SAST scanning
+# isn't the bottleneck in this pipeline (Docker/DAST/LLM calls dominate wall
+# time), so trading some parallelism for headroom costs little.
+SEMGREP_JOBS = 3
+
 # SAST Commands
 def run_bandit_on_code(code):
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
@@ -45,7 +55,7 @@ def run_semgrep_on_code(code: str, rulesets: default_semgrep_rules) -> str:
         for ruleset in rulesets:
             try:
                 proc = subprocess.run(
-                    ["semgrep", "--quiet", "--config", ruleset, "--json", fname],
+                    ["semgrep", "--quiet", "--jobs", str(SEMGREP_JOBS), "--config", ruleset, "--json", fname],
                     capture_output=True, text=True
                 )
                 # 0: no findings, 1: findings 
@@ -227,7 +237,7 @@ def run_semgrep_structured(code: str, sample_id: str, rulesets: list[str] | None
     try:
         for ruleset in rulesets:
             proc = subprocess.run(
-                [semgrep_bin, "--quiet", "--config", ruleset, "--json", fname],
+                [semgrep_bin, "--quiet", "--jobs", str(SEMGREP_JOBS), "--config", ruleset, "--json", fname],
                 capture_output=True, text=True,
             )
             if proc.returncode not in (0, 1):
@@ -372,7 +382,7 @@ def run_semgrep_batch(samples: list[tuple[str, str]], rulesets: list[str] | None
 
         for ruleset in rulesets:
             proc = subprocess.run(
-                [semgrep_bin, "--quiet", "--config", ruleset, "--json", str(batch_dir)],
+                [semgrep_bin, "--quiet", "--jobs", str(SEMGREP_JOBS), "--config", ruleset, "--json", str(batch_dir)],
                 capture_output=True, text=True,
             )
             if proc.returncode not in (0, 1):

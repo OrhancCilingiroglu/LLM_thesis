@@ -25,7 +25,24 @@ from sarif_scanners import findings_from_columns, findings_to_columns  # noqa: E
 # columns save_scan_results() still writes. Both are kept: the legacy columns are never
 # touched again (old numbers stay reproducible), the new columns hold the fixed
 # extraction (bandit's structured issue_cwe.id, semgrep's ruleset-tagged findings).
-STRUCTURED_FINDING_TOOLS = frozenset({"codeql", "snyk_code", "bandit", "semgrep"})
+#
+# "claude_judge" / "gpt4_judge" are the Phase 2 LLM judges (project/core/llm_judge.py)
+# -- same <tool>_cwes/_raw/_version column shape, `raw` carries the full structured
+# verdict (evidence_line, confidence, evidence_pass) instead of a SARIF payload.
+# "*_blind" variants are the same judges run with a prompt that never reveals the
+# sample's target CWE (methodology-plan.md §2.1 blind-recovery pass) -- a separate
+# tool name/column set so the target-anchored and blind results never overwrite
+# each other, same reasoning as bandit vs bandit_new elsewhere in this file.
+STRUCTURED_FINDING_TOOLS = frozenset({
+    "codeql", "snyk_code", "bandit", "semgrep",
+    "claude_judge", "gpt4_judge", "claude_judge_blind", "gpt4_judge_blind",
+    "claude_judge_guided", "gpt4_judge_guided",
+    # phase2-acceptance-artifacts.md open item 7 -- negative-control /
+    # decoy-category cross-check (project/core/llm_judge.py's
+    # build_negctrl_judge_prompt). Standalone diagnostic, not a fusion
+    # source -- not added to fusion_model.py's JUDGE_SOURCE_SETS.
+    "claude_judge_negctrl", "gpt4_judge_negctrl",
+})
 
 class DBManager:
     def __init__(self, db_path=DB_PATH):
@@ -46,21 +63,36 @@ class DBManager:
         else:
             raise ValueError(f"No entry found for ID: {code_id}")
         
-    def fill_row_to_database(self ,cwe, producer, codetask, webproduct, webstyle,  secure, code, dockerfile, sql_script, requirements, port):
+    def fill_row_to_database(self, cwe, producer, codetask, webproduct, webstyle, secure,
+                              code, dockerfile, sql_script, requirements, port,
+                              producer_model: str | None = None):
+        """`producer_model` records the exact model string behind `producer`
+        at generation time (e.g. producer="groq", producer_model=
+        "qwen/qwen3.8-27b") -- added 2026-09-09 because Groq retired
+        llama-3.3-70b-versatile with no notice, and `producer` alone can't
+        distinguish samples generated before vs. after a provider swaps
+        which model backs it. Optional and defaults to None so every
+        existing call site (and every historical row) is unaffected;
+        column is added lazily on first use, same pattern as
+        owasp_zap_authenticated/docker_recheck elsewhere in this file.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
+            cursor.execute("PRAGMA table_info(code_cwe)")
+            if "producer_model" not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE code_cwe ADD COLUMN producer_model TEXT")
             cursor.execute("""
                 INSERT INTO code_cwe (
                     CWE, producer, codetask, webproduct, webstyle,
                     secure, code, dockerfile, sql_script, requirements,
-                    port
+                    port, producer_model
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 cwe, producer, codetask, webproduct, webstyle,
                 secure, code, dockerfile, sql_script, requirements,
-                port
+                port, producer_model
             ))
             conn.commit()
             print("Row save done!")

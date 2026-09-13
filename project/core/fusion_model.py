@@ -1,24 +1,36 @@
 """
 fusion_model.py
 ================
-Dawid-Skene label fusion over every SAST/DAST source (methodology-plan.md
-Section 1.5 / E1). Combines each source's per-sample vote --
-VULNERABLE / SECURE / ABSTAIN, for "does this source's output support the
-sample's target CWE being present" -- into one probabilistic label,
-estimating each source's sensitivity/specificity purely from inter-source
-agreement, with no ground truth (there is none in this project).
+Label fusion over every SAST/DAST source (methodology-plan.md Section 1.5 /
+E1). Combines each source's per-sample vote -- VULNERABLE / SECURE / ABSTAIN,
+for "does this source's output support the sample's target CWE being
+present" -- into one label per sample.
 
 Implements the three fusion methods the plan's Phase 1 acceptance artifact
 asks to compare:
-    F0  1-of-n union            (the pipeline's original behaviour)
-    F1  majority vote
-    F2  Dawid-Skene EM          (this module's actual contribution)
+    F0  1-of-n union            **official label as of 2026-09-06**
+    F1  majority vote           reference/comparison only
+    F2  Dawid-Skene EM          reference/comparison only
+
+**F0 (union) is the official fusion method**, a deliberate user decision
+made 2026-09-06 after Dawid-Skene's per-source sensitivity/specificity was
+found to be fit *globally* across all OWASP categories despite SAST/DAST
+tools having genuinely different, non-overlapping rule scope per category --
+e.g. owasp_zap's specificity is 73.2% globally but 18.6% specifically within
+A04 (its generic scan policy over-fires there); bandit_new's sensitivity is
+48.2% globally but 0.0% within A06 (no rule targets insecure-design-class
+CWEs at all). A per-category EM refit would address this, but the project's
+priority is maximizing usable labelled sample count without adding a second
+layer of untested modelling assumptions on top of an already tool-limited
+label. F1/F2 remain implemented and persisted (`f1_majority`,
+`f2_dawid_skene` columns) for comparison and reproducibility -- not deleted,
+per this project's rule against discarding old, still-reproducible results.
 
 Reference: Dawid & Skene (1979), "Maximum Likelihood Estimation of Observer
-Error-Rates Using the EM Algorithm". No gold labels are used to fit the
-model; the generation-time target CWE is used only afterwards, as a noisy,
-independent sanity check (RQ6', see methodology-plan.md Section 0.1) --
-never to train the fusion weights themselves.
+Error-Rates Using the EM Algorithm" -- F2's implementation, kept for
+reference. No gold labels are used to fit it; the generation-time target CWE
+is used only afterwards, as a noisy, independent sanity check (RQ6', see
+methodology-plan.md Section 0.1) -- never to train fusion weights.
 
 Scope of this pass: vulnerable-labelled, docker-successful samples only
 (8,544) -- these are the samples with a meaningful "does source X detect
@@ -62,6 +74,38 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "code_cwe.db")
 HIERARCHY_SOURCES = ("bandit_new", "semgrep_new", "sonarqube", "codeql", "snyk_code", "owasp_zap", "burpsuite")
 # Computed fresh here: too new to be in cwe_hierarchy_matches yet.
 FRESH_SOURCES = ("owasp_zap_authenticated",)
+# LLM judges (project/core/llm_judge.py, Phase 2). Three prompt variants,
+# same two providers, full measurements in phase2-acceptance-artifacts.md:
+#   anchored  -- prompt names the sample's target CWE, asks confirm/deny.
+#                Near-zero specificity (8.0%/30.5%, changes_summary.md
+#                2026-09-02 (2)) -- a judge asked "confirm CWE-X" confirms
+#                almost every time. Dawid-Skene correctly down-weights it to
+#                near-zero influence. Kept only so that finding stays
+#                reproducible; not worth feeding into fusion.
+#   blind     -- prompt never mentions the target; judge independently names
+#                whatever CWE it finds. Real detector behaviour (full-scale:
+#                22-23% strict / 27-30% relaxed recovery, ~1.8x the tool
+#                stack's own 12.5% strict rate), but recovery is bimodal --
+#                near-zero on ~15 rarer/architectural CWEs the judge
+#                apparently never spontaneously considers.
+#   guided    -- prompt lists the target's OWASP-category candidate CWEs
+#                (with MITRE names) as a checklist, never says which one is
+#                correct. Strictly better than blind at full scale, notably
+#                for gpt4: strict recovery 22.9% -> 35.6% (~2.8x the tool
+#                stack), and recovers several of blind's 0%-recovery long-
+#                tail CWEs outright (changes_summary.md 2026-09-03 (3)).
+#                **This is the recommended judge source for fusion.**
+# None are folded into ALL_SOURCES: the documented Phase 1 acceptance-
+# artifact numbers (phase1-acceptance-artifacts.md) are the 8-source result,
+# and a default `python fusion_model.py` run must keep reproducing exactly
+# that -- judges are opt-in via build_vote_matrix(judge_mode=...), one of
+# None (default) / "anchored" / "blind" / "guided", each persisted to its
+# own table (fusion_labels_with_judges{,_blind,_guided}) rather than
+# overwriting fusion_labels.
+JUDGE_SOURCES = ("claude_judge", "gpt4_judge")
+JUDGE_SOURCES_BLIND = ("claude_judge_blind", "gpt4_judge_blind")
+JUDGE_SOURCES_GUIDED = ("claude_judge_guided", "gpt4_judge_guided")
+JUDGE_SOURCE_SETS = {"anchored": JUDGE_SOURCES, "blind": JUDGE_SOURCES_BLIND, "guided": JUDGE_SOURCES_GUIDED}
 ALL_SOURCES = HIERARCHY_SOURCES + FRESH_SOURCES
 
 RELAXED_MATCH = frozenset({"exact", "ancestor", "descendant"})
@@ -69,6 +113,13 @@ RELAXED_MATCH = frozenset({"exact", "ancestor", "descendant"})
 # happens to share the target's direct parent (e.g. CWE-79 reported when the
 # target is CWE-89, both children of CWE-74) -- not a relaxed match, a wrong
 # answer. See the identical note in cwe_hierarchy_matching.py.
+STRICT_MATCH = frozenset({"exact"})
+# The other reading of the same question: does a source get credit for
+# reporting the target's parent/child at all, at any depth? `strict=True`
+# on build_vote_matrix()/run_fusion() answers "no" -- only an exact CWE
+# match counts as a VULN vote. Both readings are legitimate and are reported
+# side by side, never one replacing the other (same pattern as
+# unrelated_as_abstain).
 
 VULN, SEC, ABSTAIN = 1, 0, -1
 
@@ -89,11 +140,18 @@ def _scanned_predicate(source: str) -> str:
         "owasp_zap": "owasp_zap != 'not-tested' AND owasp_zap IS NOT NULL",
         "burpsuite": "burpsuite != 'not-tested' AND burpsuite IS NOT NULL",
         "owasp_zap_authenticated": "owasp_zap_authenticated IS NOT NULL",
+        "claude_judge": "claude_judge_version IS NOT NULL",
+        "gpt4_judge": "gpt4_judge_version IS NOT NULL",
+        "claude_judge_blind": "claude_judge_blind_version IS NOT NULL",
+        "gpt4_judge_blind": "gpt4_judge_blind_version IS NOT NULL",
+        "claude_judge_guided": "claude_judge_guided_version IS NOT NULL",
+        "gpt4_judge_guided": "gpt4_judge_guided_version IS NOT NULL",
     }[source]
 
 
 def build_vote_matrix(
     db_path: str, docker_status: str = "tested-successful", unrelated_as_abstain: bool = False,
+    judge_mode: str | None = None, strict: bool = False,
 ) -> tuple[list[int], dict[str, dict[int, int]]]:
     """Returns (sample_ids, {source: {sample_id: vote}}), vote in {VULN, SEC, ABSTAIN}.
 
@@ -101,14 +159,31 @@ def build_vote_matrix(
     unrelated CWE" result is treated -- see _vote()'s docstring-comment
     below for the reasoning. Compare both by calling this twice; see
     compare_unrelated_treatment().
+
+    `judge_mode` is None (default, no judges) or one of JUDGE_SOURCE_SETS's
+    keys ("anchored" / "blind" / "guided") -- see the ALL_SOURCES/JUDGE_
+    SOURCES comment for why "guided" is the recommended one.
+
+    `strict` toggles whether a reported ancestor/descendant of the target
+    counts as a VULN vote. False (default) = RELAXED_MATCH, the existing
+    behaviour. True = STRICT_MATCH, only an exact CWE match counts -- report
+    both readings side by side, never one instead of the other.
     """
+    if judge_mode is not None and judge_mode not in JUDGE_SOURCE_SETS:
+        raise ValueError(f"judge_mode must be None or one of {sorted(JUDGE_SOURCE_SETS)}, got {judge_mode!r}")
+    judge_sources = JUDGE_SOURCE_SETS[judge_mode] if judge_mode else ()
+    sources = ALL_SOURCES + judge_sources
+
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    scanned_cols = ", ".join(f"({_scanned_predicate(s)}) AS scanned_{s}" for s in ALL_SOURCES)
+    scanned_cols = ", ".join(f"({_scanned_predicate(s)}) AS scanned_{s}" for s in sources)
+    judge_cwe_cols = (
+        ", " + ", ".join(f"{j}_cwes" for j in judge_sources) if judge_sources else ""
+    )
     rows = conn.execute(
         f"""
-        SELECT id, CWE, owasp_zap_authenticated, {scanned_cols}
+        SELECT id, CWE, owasp_zap_authenticated{judge_cwe_cols}, {scanned_cols}
         FROM code_cwe
         WHERE docker = ? AND secure IN ('VULNERABLE', 0)
         """,
@@ -116,7 +191,7 @@ def build_vote_matrix(
     ).fetchall()
     sample_ids = [r["id"] for r in rows]
     target_cwe = {r["id"]: int(str(r["CWE"]).replace("CWE-", "")) for r in rows}
-    scanned = {s: {r["id"]: bool(r[f"scanned_{s}"]) for r in rows} for s in ALL_SOURCES}
+    scanned = {s: {r["id"]: bool(r[f"scanned_{s}"]) for r in rows} for s in sources}
 
     # --- hierarchy-classified sources: read straight from cwe_hierarchy_matches ---
     placeholders = ",".join("?" * len(HIERARCHY_SOURCES))
@@ -128,6 +203,7 @@ def build_vote_matrix(
 
     # --- fresh source: owasp_zap_authenticated, classified here ---
     hierarchy = load_hierarchy()
+    _REL_RANK = {"exact": 0, "ancestor": 1, "descendant": 2, "sibling": 3, "unrelated": 4, "none": 5}
     auth_zap_relationship: dict[int, str] = {}
     for r in rows:
         if not scanned["owasp_zap_authenticated"][r["id"]]:
@@ -138,14 +214,37 @@ def build_vote_matrix(
             continue
         best = min(
             (hierarchy.classify(cwe, target_cwe[r["id"]]) for cwe in reported),
-            key=lambda rel: {"exact": 0, "ancestor": 1, "descendant": 2, "sibling": 3, "unrelated": 4, "none": 5}[rel],
+            key=lambda rel: _REL_RANK[rel],
         )
         auth_zap_relationship[r["id"]] = best
 
+    # --- judges: full hierarchy classification against whatever CWE they
+    # reported. For anchored judges this collapses to exact/no_report in
+    # practice (the prompt names the target), but blind judges genuinely
+    # report independent CWEs, so ancestor/descendant/sibling are real
+    # outcomes here and must go through the same classifier as every other
+    # source rather than a simplified exact-string check. ---
+    judge_relationship: dict[str, dict[int, str]] = {j: {} for j in judge_sources}
+    for r in rows:
+        for j in judge_sources:
+            if not scanned[j][r["id"]]:
+                continue
+            reported = {int(c.replace("CWE-", "")) for c in (r[f"{j}_cwes"] or "").split(",") if c}
+            if not reported:
+                judge_relationship[j][r["id"]] = "no_report"
+                continue
+            best = min(
+                (hierarchy.classify(cwe, target_cwe[r["id"]]) for cwe in reported),
+                key=lambda rel: _REL_RANK[rel],
+            )
+            judge_relationship[j][r["id"]] = best
+
     conn.close()
 
+    match_set = STRICT_MATCH if strict else RELAXED_MATCH
+
     def _vote(rel: str) -> int:
-        if rel in RELAXED_MATCH:
+        if rel in match_set:
             return VULN
         if rel == "unrelated" and unrelated_as_abstain:
             # A source reporting some *other*, genuinely unrelated CWE is not
@@ -159,7 +258,7 @@ def build_vote_matrix(
             return ABSTAIN
         return SEC
 
-    votes: dict[str, dict[int, int]] = {s: {} for s in ALL_SOURCES}
+    votes: dict[str, dict[int, int]] = {s: {} for s in sources}
     for sid in sample_ids:
         for s in HIERARCHY_SOURCES:
             if not scanned[s][sid]:
@@ -173,6 +272,12 @@ def build_vote_matrix(
                 continue
             rel = auth_zap_relationship.get(sid, "no_report")
             votes[s][sid] = _vote(rel)
+        for j in judge_sources:
+            if not scanned[j][sid]:
+                votes[j][sid] = ABSTAIN
+                continue
+            rel = judge_relationship[j].get(sid, "no_report")
+            votes[j][sid] = _vote(rel)
 
     return sample_ids, votes
 
@@ -291,6 +396,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 def run_fusion(
     db_path: str | None = None, unrelated_as_abstain: bool = False, table_name: str = "fusion_labels",
+    judge_mode: str | None = None, strict: bool = False,
 ) -> tuple[DawidSkeneResult, list[int], dict[str, dict[int, int]]]:
     """Fit + persist. `table_name` lets the two "unrelated" treatments coexist
     as separate tables (fusion_labels = official/default = SECURE treatment;
@@ -299,7 +405,9 @@ def run_fusion(
     elsewhere in this project: both are legitimate results worth keeping.
     """
     db_path = db_path or DEFAULT_DB_PATH
-    sample_ids, votes = build_vote_matrix(db_path, unrelated_as_abstain=unrelated_as_abstain)
+    sample_ids, votes = build_vote_matrix(
+        db_path, unrelated_as_abstain=unrelated_as_abstain, judge_mode=judge_mode, strict=strict,
+    )
     f0 = union_label(sample_ids, votes)
     f1 = majority_label(sample_ids, votes)
     ds = fit_dawid_skene(sample_ids, votes)
@@ -389,7 +497,7 @@ def print_report(ds: DawidSkeneResult, sample_ids: list[int], votes: dict[str, d
 
     print()
     print("=" * 78)
-    print("FUSION METHOD COMPARISON (F0 union / F1 majority / F2 Dawid-Skene)")
+    print("FUSION METHOD COMPARISON (F0 union = OFFICIAL / F1 majority / F2 Dawid-Skene, reference only)")
     print("=" * 78)
     n_f0 = sum(f0.values())
     n_f1 = sum(f1.values())

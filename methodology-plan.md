@@ -25,8 +25,30 @@ two RQ4s in a thesis is a defence-day problem.
 | RQ2 | To what extent does CWE-oriented fine-tuning improve that? | Existing, answered — needs re-running with seeds |
 | RQ3 | How do training and data parameters affect fine-tuned performance? | Finalized |
 | RQ4 | How does the *detection prompt* affect fine-tuned performance? Which prompt components matter? | Finalized |
-| RQ5 | Label format: multi-label bit string (all vulnerabilities) vs. single label (target / most significant) — which is learned better? | More-or-less determined |
+| RQ5 | Label format: multi-label bit string (all vulnerabilities) vs. single label (target / most significant) — which is learned better? | **Rejected, 2026-09-06** — user decision: no multi-label work. See note below the table. |
 | RQ6 | How do fine-tuned LLMs compare against the SAST/DAST tool stack? | Reduced scope — see 0.1 |
+
+**RQ5, rejected 2026-09-06.** Dropped entirely at the user's explicit request
+("multi label işine girmeyeceğim kesinlikle") — not deferred, not
+descoped-but-kept, rejected. This was not an arbitrary call: an actual check
+of what a naive multi-label target ("every CWE any source reports for this
+sample") would contain found a median of 5-6 distinct CWEs per sample
+across just 6 sources, for samples each generated to contain **exactly one**
+target weakness — collapsing hierarchy-related duplicates barely changed
+this, meaning most of that noise is genuinely unrelated to the target, not
+a relabelling of it. This matches the thesis's own §5.3.4 finding (Run 1's
+baseline over-predicts 582 distinct CWEs, 529 never correct; the fine-tuned
+model converges on generic catch-alls like CWE-605/CWE-497 that were baked
+into its multi-label training target). E4 (label format ablation) is
+cancelled along with it — see §3.2's note. This also resolves Open Item 3
+in §6 ("single vs. multi-label as the primary framing") in favour of
+single-label, permanently.
+
+The "New RQ" (specific-vs-generic transfer, §0.2) is **not** affected by
+this: its reformulation into G1/G2/G3 label-granularity conditions (E5) is
+independent of RQ5 — none of G1/G2/G3 is a multi-label bit-string, all
+three are single-target formats at different specificity levels. E5 stays
+in scope unless separately cut.
 
 ### 0.1 RQ6 without a human gold set
 
@@ -115,7 +137,7 @@ the thesis as-is.
 | E1 | Parallel judgment + fusion model comparison (union / majority / Dawid-Skene) | — (dataset) | 1 | Label-quality vs. dataset-size curve |
 | E2 | Source characterisation without gold: target-CWE recovery, agreement matrix, evidence-check rate | RQ6′ input | 2 | Per-source reliability table |
 | E3 | Stage-1: all base models, vanilla vs. fine-tuned | RQ1, RQ2 | 3 | Baseline comparison; selects 2 models |
-| E4 | Label format: single vs. multi-label bit string | RQ5 | 3 | Format comparison table |
+| ~~E4~~ | ~~Label format: single vs. multi-label bit string~~ | ~~RQ5~~ | — | **Cancelled 2026-09-06** — RQ5 rejected, see §0 note |
 | E5 | Label granularity: G1 / G2 / G3 | RQ5 | 3 | Granularity comparison table |
 | E6 | Detection-prompt component ablation | RQ4 | 3 | Prompt-component contribution table |
 | E7 | Stage-2: epoch count sweep | RQ3 | 4 | Parameter curve |
@@ -565,16 +587,16 @@ look at it until E12.
 
 Three seeds per configuration — see V1.
 
-### 3.2 E4 — label format (RQ5)
+### 3.2 E4 — label format (RQ5) — **cancelled, 2026-09-06**
 
-Single label (target CWE) vs. multi-label bit string (all CWEs raised for the
-sample). Runs 1/2 vs. Runs 3/4 in the current thesis already gesture at this,
-but they also differ in base model and dataset, so nothing is isolated. Hold
-everything else fixed and vary only the target format.
-
-Report: accuracy, weighted F1, hallucination rate, CWEs emitted per sample. The
-current results suggest the multi-label target is what drives the 100%
-hallucination rate — confirm or refute it under controlled conditions.
+Was: single label (target CWE) vs. multi-label bit string (all CWEs raised
+for the sample), isolated from Runs 1/2 vs. Runs 3/4's base-model/dataset
+confound. Dropped at the user's request before being run — no multi-label
+work in this thesis. The confound-affected Run 1/2 vs Run 3/4 numbers
+already in the thesis stand as-is (not re-run, not further investigated);
+report them with the confound caveat already written into §5.3.1, nothing
+more. See §0's rejection note for the supporting data (median 5-6 distinct,
+mostly-unrelated CWEs per sample in a naive multi-label target).
 
 ### 3.3 E5 — label granularity (RQ5)
 
@@ -788,9 +810,10 @@ Tracked here because they gate the write-up rather than the code:
    format, and how much of the pipeline chapter survives into a paper.
 2. **Final thesis deadline** — Budi's current comments plus the comments that
    follow the work in this plan. Needs a date before Phase 4 scope can be fixed.
-3. **Single vs. multi-label as the *primary* framing** — marked "to be
-   discussed". E4 and E5 produce the evidence; the framing decision follows the
-   result, not the other way round.
+3. ~~Single vs. multi-label as the *primary* framing~~ — **resolved
+   2026-09-06: single-label, permanently.** RQ5/E4 rejected outright (see §0);
+   there is no multi-label result to weigh against single-label, so the
+   framing decision is no longer pending.
 4. **SonarQube Developer-edition licence** — university availability.
 
 ---

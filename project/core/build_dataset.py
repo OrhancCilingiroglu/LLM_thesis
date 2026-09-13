@@ -3,13 +3,20 @@ Build a balanced, stratified JSONL dataset from code_cwe.db for LLM fine-tuning.
 
 Selection rules (all configurable):
   * only rows where docker == 'tested-successful'
-  * vulnerable rows must clear a correlation filter:
-        - FULL              → SAST hit AND DAST hit (strict / clean labels)
-        - PARTIAL           → SAST hit XOR DAST hit (single-source detection)
-        - FULL_OR_PARTIAL   → either of the above (default — maximum recall)
-    Burpsuite is now folded into DAST hits via the per-finding
-    `burp_scan_result` table (see Burpsuite contribution below).
-  * secure rows must be correlation-NONE (no tool flagged the DB CWE → clean)
+  * vulnerable rows must clear an acceptance gate (--corr_filter):
+        - FUSION_F0         → fusion_model.py's persisted, hierarchy-aware
+                               F0 union label across all 8 SAST/DAST sources
+                               (default since 2026-09-08 -- see
+                               changes_summary.md's 2026-09-08 (2)/(7))
+        - FULL              → SAST hit AND DAST hit (strict, exact-match only)
+        - PARTIAL           → SAST hit XOR DAST hit (single-source, exact-match only)
+        - FULL_OR_PARTIAL   → either of the above (legacy default pre-2026-09-08)
+    Burpsuite is folded into DAST hits via the per-finding `burp_scan_result`
+    table (see Burpsuite contribution below); FULL/PARTIAL now also read
+    bandit_new/semgrep_new/codeql/snyk_code/owasp_zap_authenticated instead
+    of the legacy pre-Phase-1 columns (see row_correlation()'s docstring).
+  * secure rows must be correlation-NONE (no tool flagged the DB CWE → clean,
+    checked against the same widened tool set as FULL/PARTIAL above)
   * per-CWE cap: at most MAX_PER_BUCKET per (cwe, secure_flag) bucket
   * per-CWE floor: CWEs with < MIN_PER_CWE vulnerable samples are dropped
   * code-level dedup via sha1 of stripped source
@@ -53,7 +60,7 @@ Useful for the classical single-label baseline experiment.
 `--include_db_cwe_in_target False` builds the union strictly from tool
 outputs (without injecting the DB ground-truth label).
 
-`--corr_filter` lets the user pick FULL / PARTIAL / FULL_OR_PARTIAL / ALL.
+`--corr_filter` lets the user pick FUSION_F0 / FULL / PARTIAL / FULL_OR_PARTIAL / ALL.
 
 Raw tool-consensus mode
 -----------------------
@@ -98,8 +105,27 @@ RNG = random.Random(42)
 # `--burp_min_confidence` flag for noise control.
 BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
 
-# Correlation filter choices for vulnerable rows. FULL_OR_PARTIAL is the
-# default and matches the legacy behaviour of the previous build script.
+# Correlation filter choices for vulnerable rows.
+#
+# FUSION_F0 is the default (changed 2026-09-08, see changes_summary.md).
+# Gates vulnerable-row acceptance on `fusion_labels.f0_union` --
+# fusion_model.py's already-computed, hierarchy-aware union across all 8
+# SAST/DAST sources (bandit_new, semgrep_new, sonarqube, codeql, snyk_code,
+# owasp_zap, owasp_zap_authenticated, burpsuite). Read-only: build_dataset.py
+# never recomputes fusion itself, it only reads the persisted artifact
+# (`python fusion_model.py` must be re-run first if the DB has changed since
+# fusion_labels was last written) -- "scoring must not live inside scanning"
+# per CLAUDE.md, and re-scoring here would just duplicate a computation that
+# already exists and is independently tested.
+#
+# FULL / PARTIAL / FULL_OR_PARTIAL are the legacy correlation-based gates
+# (SAST hit AND/OR/XOR DAST hit on the DB CWE, exact-match only, no
+# hierarchy). Still available for ablations that specifically want that
+# narrower definition, but no longer the default -- they were silently
+# running on stale pre-Phase-1 tool columns until this fix (see
+# changes_summary.md's 2026-09-08 (2) entry for the diagnosis) and even
+# corrected to read the fixed columns, they lack hierarchy-aware matching
+# and CodeQL/Snyk, which FUSION_F0 has.
 #
 # ALL disables correlation-based acceptance entirely: every docker-runnable
 # row is kept, secure and vulnerable alike, regardless of whether any tool
@@ -109,7 +135,7 @@ BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
 # this deliberately removes the quality gate — the resulting labels contain
 # whatever noise the tools produce, which is the point when the research
 # question is about tool reliability itself.
-CORR_FILTER_CHOICES = ("FULL", "PARTIAL", "FULL_OR_PARTIAL", "ALL")
+CORR_FILTER_CHOICES = ("FUSION_F0", "FULL", "PARTIAL", "FULL_OR_PARTIAL", "ALL")
 
 # What to write as `target` for rows the DB marks secure.
 #   none       — legacy: always "NONE" (the model should find nothing)
@@ -288,14 +314,63 @@ def fetch_burp_cwes_from_db(db_path: str, code_id: int,
     return found
 
 
+def _fetch_new_tool_cwes(db_path: str, code_id: int) -> dict:
+    """bandit/semgrep/codeql/snyk_code's *structured* `<tool>_cwes` columns
+    (fixed CWE extraction, distinct from the legacy free-text `code_cwe.
+    bandit`/`code_cwe.semgrep` columns `sast_row` reads) plus
+    owasp_zap_authenticated -- the Phase 1 fixes/additions that
+    `per_tool_cwes()` didn't read before 2026-09-08 (changes_summary.md's
+    2026-09-08 (2) entry). NOTE: despite "bandit_new"/"semgrep_new" being
+    the names used in prose/fusion_model.py's source labels, the actual DB
+    columns are `bandit_cwes`/`semgrep_cwes` (see cwe_hierarchy_matching.py's
+    `_STRUCTURED_TOOL_DB_NAME` mapping) -- fixed here 2026-09-11 after this
+    function silently queried the nonexistent `bandit_new_cwes`/
+    `semgrep_new_cwes` and got dropped by the `present` filter below,
+    meaning bandit/semgrep contributed nothing via this path (codeql/
+    snyk_code/zap_authenticated were unaffected, those names are correct).
+    Structured columns are already comma-separated "CWE-xx" strings
+    (`sarif_scanners.findings_to_columns`), same format `parse_sast_cwes`
+    already parses, so no new parser is needed.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(code_cwe)").fetchall()}
+        wanted = ["bandit_cwes", "semgrep_cwes", "codeql_cwes",
+                  "snyk_code_cwes", "owasp_zap_authenticated"]
+        present = [c for c in wanted if c in cols]
+        if not present:
+            return {}
+        row = conn.execute(
+            f"SELECT {', '.join(present)} FROM code_cwe WHERE id = ?", (code_id,)
+        ).fetchone()
+        if row is None:
+            return {}
+        values = dict(zip(present, row))
+    finally:
+        conn.close()
+    return {
+        "bandit_new":  parse_sast_cwes(values.get("bandit_cwes") or ""),
+        "semgrep_new": parse_sast_cwes(values.get("semgrep_cwes") or ""),
+        "codeql":      parse_sast_cwes(values.get("codeql_cwes") or ""),
+        "snyk_code":   parse_sast_cwes(values.get("snyk_code_cwes") or ""),
+        "zap_authenticated": parse_zap_cwes(values.get("owasp_zap_authenticated")),
+    }
+
+
 def per_tool_cwes(db: DBManager, code_id: int, sast_row, dast_row,
                   burp_min_confidence: str | None = None) -> dict:
     """
     Return a dict {tool_name: set_of_CWE_strings} for every CWE-emitting
     tool on a single row. Burpsuite is included by reading the
     `burp_scan_result` detail table (see `fetch_burp_cwes_from_db`).
+
+    "bandit"/"semgrep" here are the legacy pre-Phase-1 columns, kept for
+    provenance/comparison; "bandit_new"/"semgrep_new"/"codeql"/"snyk_code"/
+    "zap_authenticated" are the fixed/added Phase 1 sources -- both sets
+    feed `row_correlation()`/`merged_cwes()` so nothing regresses, but
+    `row_correlation()` was widened (see its docstring) to read the new set.
     """
-    return {
+    tool_cwes = {
         "bandit":    parse_sast_cwes(sast_row[1] if sast_row and len(sast_row) > 1 else ""),
         "semgrep":   parse_sast_cwes(sast_row[2] if sast_row and len(sast_row) > 2 else ""),
         "sonarqube": parse_sonarqube_cwes(sast_row[3] if sast_row and len(sast_row) > 3 else ""),
@@ -303,6 +378,8 @@ def per_tool_cwes(db: DBManager, code_id: int, sast_row, dast_row,
         "burpsuite": fetch_burp_cwes_from_db(db.db_path, code_id,
                                              min_confidence=burp_min_confidence),
     }
+    tool_cwes.update(_fetch_new_tool_cwes(db.db_path, code_id))
+    return tool_cwes
 
 
 def merged_cwes(db_cwe: str, tool_cwes: dict, include_db_cwe: bool = True,
@@ -349,21 +426,30 @@ def merged_cwes(db_cwe: str, tool_cwes: dict, include_db_cwe: bool = True,
 def row_correlation(db_cwe: str, tool_cwes: dict) -> str:
     """
     FULL / PARTIAL / NONE classification for the DB-labelled CWE on a
-    single row.
+    single row. Exact-match only (no hierarchy) -- for that, use the
+    `FUSION_F0` corr_filter instead, which reads fusion_model.py's already
+    hierarchy-aware label rather than reimplementing that matching here.
 
-    SAST hit ⇔ db_cwe in (bandit ∪ semgrep ∪ sonarqube)
-    DAST hit ⇔ db_cwe in (zap     ∪ burpsuite)
+    SAST hit ⇔ db_cwe in (bandit_new ∪ semgrep_new ∪ sonarqube ∪ codeql ∪ snyk_code)
+    DAST hit ⇔ db_cwe in (zap ∪ zap_authenticated ∪ burpsuite)
 
-    This is equivalent to the legacy implementation (see
-    `DBManager.save_scan_results`, burpsuite branch) where the cached
-    'found' status was set iff the DB CWE was present in the set of
-    Burp mapped_cwes for that row — only now we get full per-CWE
-    granularity for the rest of the pipeline.
+    Widened 2026-09-08 (changes_summary.md 2026-09-08 (2)) from the legacy
+    bandit/semgrep-only, no-CodeQL/Snyk version -- that version silently
+    reproduced the pre-Phase-1 "Old" 14.6%-strict detection rate. `bandit`/
+    `semgrep` (the legacy, known-buggy columns -- see Phase 1's bandit
+    comment-contamination fix) are deliberately excluded from this
+    computation now; they're still in `tool_cwes` for `merged_cwes()`'s
+    multi-label union and provenance, just not trusted for the correlation
+    gate anymore.
     """
-    in_sast = db_cwe in (tool_cwes["bandit"]
-                         | tool_cwes["semgrep"]
-                         | tool_cwes["sonarqube"])
-    in_dast = db_cwe in (tool_cwes["zap"] | tool_cwes["burpsuite"])
+    in_sast = db_cwe in (tool_cwes["bandit_new"]
+                         | tool_cwes["semgrep_new"]
+                         | tool_cwes["sonarqube"]
+                         | tool_cwes["codeql"]
+                         | tool_cwes["snyk_code"])
+    in_dast = db_cwe in (tool_cwes["zap"]
+                         | tool_cwes["zap_authenticated"]
+                         | tool_cwes["burpsuite"])
 
     if in_sast and in_dast:
         return "FULL"
@@ -372,29 +458,77 @@ def row_correlation(db_cwe: str, tool_cwes: dict) -> str:
     return "NONE"
 
 
-def _accept_vuln(corr: str, corr_filter: str) -> bool:
-    """Apply the user-selected correlation filter to a vulnerable row."""
+def _accept_vuln(corr: str, corr_filter: str, f0: bool | None = None) -> bool:
+    """Apply the user-selected correlation filter to a vulnerable row.
+
+    `f0` is this row's `fusion_labels.f0_union` value (None if the row
+    wasn't in fusion's scope, e.g. not yet scanned by any source) --
+    only consulted when corr_filter == "FUSION_F0".
+    """
     if corr_filter == "ALL":
         return True                      # no correlation gate at all
+    if corr_filter == "FUSION_F0":
+        return bool(f0)                  # None (not in fusion's scope) -> reject
     if corr_filter == "FULL":
         return corr == "FULL"
     if corr_filter == "PARTIAL":
         return corr == "PARTIAL"
-    # FULL_OR_PARTIAL (default) — legacy behaviour
+    # FULL_OR_PARTIAL — legacy behaviour
     return corr in ("FULL", "PARTIAL")
 
 
 # ─────────────────────────────────────────────────────────────
 # Row collection
 # ─────────────────────────────────────────────────────────────
+def _load_f0_union(db_path: str) -> dict[int, bool]:
+    """Reads fusion_model.py's already-persisted, hierarchy-aware F0 union
+    label. Read-only -- run `python fusion_model.py` first if the DB has
+    changed since fusion_labels was last written; this function does not
+    recompute it (scoring stays a separate pass from this dataset-building
+    pass, same as it stays separate from scanning).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='fusion_labels'"
+        ).fetchone()
+        if not exists:
+            return {}
+        return {
+            r[0]: bool(r[1])
+            for r in conn.execute("SELECT code_id, f0_union FROM fusion_labels").fetchall()
+        }
+    finally:
+        conn.close()
+
+
 def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                  include_db_cwe_in_target=True,
                  burp_min_confidence: str | None = None,
-                 corr_filter: str = "FULL_OR_PARTIAL",
+                 corr_filter: str = "FUSION_F0",
                  min_full_per_cwe: int = 0,
                  min_partial_per_cwe: int = 0,
-                 exact_per_bucket: int | None = None):
+                 exact_per_bucket: int | None = None,
+                 stats: dict | None = None):
+    """`stats`, when passed, is filled in place with a per-stage row count
+    (docker pool -> too-short -> empty-after-scrub -> dedup -> accepted
+    pre-floor -> kept after per-CWE floor -> final after bucket cap/quota).
+    Purely additive and optional -- existing callers that don't pass it see
+    no behavior change. Added to answer phase1-acceptance-artifacts.md's
+    open item 3 (the ~3,700-sample "available for training" vs "actually
+    reaches fine-tuning" gap) without guessing which stage causes it.
+    """
     ids = db.get_ids_by_docker_status("tested-successful")
+    f0_union = _load_f0_union(db.db_path) if corr_filter == "FUSION_F0" else {}
+    if stats is not None:
+        stats["docker_successful_pool"] = len(ids)
+        stats["dropped_too_short"] = 0
+        stats["dropped_empty_after_scrub"] = 0
+        stats["dropped_dedup"] = 0
+        stats["dropped_no_db_cwe"] = 0
+        stats["dropped_secure_tool_alarm"] = 0
+        stats["dropped_vuln_correlation"] = 0
+        stats["accepted_pre_floor"] = 0
     # bucket[(cwe, is_secure)] = [record, ...]
     buckets = defaultdict(list)
     seen_hashes = set()
@@ -418,6 +552,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
             code = (code_row[0] if code_row else "") or ""
             code = code.strip()
             if len(code) < 40:
+                if stats is not None:
+                    stats["dropped_too_short"] += 1
                 continue
 
             # ── prompt-leak scrub ────────────────────────────────
@@ -430,6 +566,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
             code = code.strip()
             if len(code) < 40:
                 empty_after_scrub += 1
+                if stats is not None:
+                    stats["dropped_empty_after_scrub"] += 1
                 continue
             # ──────────────────────────────────────────────────────
 
@@ -437,10 +575,14 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
             # differed by their CWE comment collapse into one
             h = hashlib.sha1(code.encode("utf-8", errors="replace")).hexdigest()
             if h in seen_hashes:
+                if stats is not None:
+                    stats["dropped_dedup"] += 1
                 continue
 
             db_cwe_raw = db.get_CWE_by_id(cid)
             if not db_cwe_raw:
+                if stats is not None:
+                    stats["dropped_no_db_cwe"] += 1
                 continue
             cwe = str(db_cwe_raw).strip().upper()
             if not cwe.startswith("CWE-"):
@@ -469,6 +611,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                 # alarm itself is the label we want to study, not a reason to
                 # discard the row.
                 if corr_filter != "ALL" and corr != "NONE":
+                    if stats is not None:
+                        stats["dropped_secure_tool_alarm"] += 1
                     continue             # any tool alarm → skip (not clean)
             else:
                 # Track the per-CWE correlation breakdown for *every*
@@ -476,7 +620,9 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                 # to drop via `corr_filter`. The CWE-level floors below
                 # consult this histogram.
                 cwe_corr_counts[cwe][corr] += 1
-                if not _accept_vuln(corr, corr_filter):
+                if not _accept_vuln(corr, corr_filter, f0=f0_union.get(cid)):
+                    if stats is not None:
+                        stats["dropped_vuln_correlation"] += 1
                     continue
 
             # multi-label target: union of every CWE any tool flagged
@@ -491,6 +637,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
             )
 
             seen_hashes.add(h)
+            if stats is not None:
+                stats["accepted_pre_floor"] += 1
             buckets[(cwe, bool(is_secure))].append({
                 "id":          cid,
                 "code":        code,
@@ -544,6 +692,8 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                 and partial_n >= min_partial_per_cwe):
             kept_cwes.add(c)
     buckets = {k: v for k, v in buckets.items() if k[0] in kept_cwes}
+    if stats is not None:
+        stats["kept_after_cwe_floor"] = sum(len(v) for v in buckets.values())
 
     # ── Per-bucket sampling ───────────────────────────────────────────────
     # Shuffle first (fixed seed → reproducible across runs) then apply the
@@ -598,6 +748,9 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
         for k in buckets:
             buckets[k] = buckets[k][:max_per_bucket]
     # max_per_bucket <= 0 → no cap at all (keep every accepted row)
+
+    if stats is not None:
+        stats["final_after_bucket_cap"] = sum(len(v) for v in buckets.values())
 
     return buckets
 
@@ -810,11 +963,14 @@ def main():
                     help="When multi_label is True, whether to also include the DB "
                          "ground-truth CWE in the target list (default True).")
     ap.add_argument("--corr_filter", choices=list(CORR_FILTER_CHOICES),
-                    default="FULL_OR_PARTIAL",
-                    help="Which correlation buckets to keep for vulnerable rows: "
-                         "FULL (SAST and DAST both detected the DB CWE), "
-                         "PARTIAL (only one of SAST/DAST detected it), "
-                         "FULL_OR_PARTIAL (default — legacy behaviour), "
+                    default="FUSION_F0",
+                    help="Which acceptance gate to apply to vulnerable rows: "
+                         "FUSION_F0 (default — reads fusion_model.py's persisted, "
+                         "hierarchy-aware F0 union label; re-run `python fusion_model.py` "
+                         "first if the DB changed since), "
+                         "FULL (SAST and DAST both detected the DB CWE, exact-match only), "
+                         "PARTIAL (only one of SAST/DAST detected it, exact-match only), "
+                         "FULL_OR_PARTIAL (legacy default before 2026-09-08), "
                          "ALL (no correlation gate at all — keeps every "
                          "docker-runnable row including secure rows that tools "
                          "flagged; pair with --secure_target tool_union).")

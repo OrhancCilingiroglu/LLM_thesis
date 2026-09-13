@@ -168,20 +168,25 @@ def generate_code(cwe_list: list, producers: list = None, max_workers: int = 3):
                     webstyle=row["webstyle"], secure=row["is_secure"],
                     code=row["code"],         dockerfile=row["dockerfile"],
                     sql_script=row["sql_script"], requirements=row["requirements"],
-                    port=row["port"]
+                    port=row["port"],         producer_model=api_router.get_model(row["producer"]),
                 )
 
 
-generate_code(cwe_list=OWASP.A01_2025_Broken_Access_Control_list)
-generate_code(cwe_list=OWASP.A02_2025_Security_Misconfiguration_list) 
-generate_code(cwe_list=OWASP.A03_2025_Sofware_Supply_Chain_list) 
-generate_code(cwe_list=OWASP.A04_2025_Cryptographic_Failures_list) 
-generate_code(cwe_list=OWASP.A05_2025_Injection_list) 
-generate_code(cwe_list=OWASP.A06_2025_Insecure_Design_list) 
-generate_code(cwe_list=OWASP.A07_2025_Authentication_Failures_list)
-generate_code(cwe_list=OWASP.A08_2025_Software_or_Data_Integrity_Failures_list) 
-generate_code(cwe_list=OWASP.A09_2025_Security_Logging_and_Alerting_Failures_list)
-generate_code(cwe_list=OWASP.A10_2025_Mishandling_of_Exceptional_Conditions_list)
+if __name__ == "__main__":
+    # Guarded so `import main` (e.g. to reuse generate_code()/needed_iterations()
+    # from another script) can't accidentally trigger a full, unbounded,
+    # real-API-cost generation run across all 10 OWASP categories as a side
+    # effect of the import. `python main.py` still runs all ten, unchanged.
+    generate_code(cwe_list=OWASP.A01_2025_Broken_Access_Control_list)
+    generate_code(cwe_list=OWASP.A02_2025_Security_Misconfiguration_list)
+    generate_code(cwe_list=OWASP.A03_2025_Sofware_Supply_Chain_list)
+    generate_code(cwe_list=OWASP.A04_2025_Cryptographic_Failures_list)
+    generate_code(cwe_list=OWASP.A05_2025_Injection_list)
+    generate_code(cwe_list=OWASP.A06_2025_Insecure_Design_list)
+    generate_code(cwe_list=OWASP.A07_2025_Authentication_Failures_list)
+    generate_code(cwe_list=OWASP.A08_2025_Software_or_Data_Integrity_Failures_list)
+    generate_code(cwe_list=OWASP.A09_2025_Security_Logging_and_Alerting_Failures_list)
+    generate_code(cwe_list=OWASP.A10_2025_Mishandling_of_Exceptional_Conditions_list)
 
 #Production continues below here
 
