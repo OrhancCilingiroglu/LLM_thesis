@@ -144,7 +144,7 @@ the thesis as-is.
 | E8 | Stage-2: context length sweep (2048 / 4096 / 8192) | RQ3 | 4 | Parameter curve |
 | E9 | Stage-2: model size (3B vs 7B, within and across families) | RQ3 | 4 | Parameter curve |
 | E10 | Adaptation method: QLoRA vs DoRA vs rank sweep vs encoder classifier | RQ3 | 4 | Parameter/method table |
-| E11 | Data content: with vs. without problematic line number in the target | RQ3 | 4 | Localisation result |
+| ~~E11~~ | ~~Data content: with vs. without problematic line number in the target~~ | ~~RQ3~~ | — | **Cancelled 2026-09-17** — no `line_number` data exists, see §4.5 |
 | E12 | Fine-tuned models vs. tool stack, scored on target-CWE recovery | RQ6′ | 4 | Head-to-head table |
 | V1 | Validity checks: matched pairs, length-matched, comment-stripped, seeds | all | 4 | "Threats to validity" subsection |
 
@@ -218,8 +218,9 @@ everything below stays exactly as it is today.
 one row per sample, so a sample with three CodeQL findings stores them together
 in `codeql_raw` and line numbers are only reachable by parsing that JSON. That is
 fine for scoring and for the fusion matrix, which need one vote per source. It is
-mildly awkward for E11 (localisation), which wants per-finding rows. Accept it;
-E11 can parse `codeql_raw` when it runs, and it is on the cut list anyway.
+mildly awkward for what would have been E11 (localisation, per-finding rows) —
+moot now that E11 is cancelled outright (§4.5): no `line_number` field exists
+to build it from regardless of row shape.
 
 **Scoring moves out of scanning.** This is the one non-negotiable part, and it is
 a new module, not a change to existing ones: a function that takes findings plus
@@ -410,8 +411,10 @@ snyk code test <batch_dir> --sarif-file-output=out.sarif
 CodeQL was not in the meeting notes; it is recommended anyway. It is the
 strongest Python taint-tracking engine available, free for academic research,
 and the thesis already names it as a gap in its own Limitations section — adding
-it converts a stated limitation into a result. It also reports **line numbers**,
-which feed E11 directly.
+it converts a stated limitation into a result. It also reports line numbers in
+its raw SARIF output — not wired into a persisted column, and not used for
+anything now that E11 is cancelled (§4.5), but worth knowing it's there if
+localisation is ever revisited.
 
 No additional DAST scanners. Coverage is not the bottleneck there.
 
@@ -535,9 +538,10 @@ structure and judge for themselves.
   `evidence_line` must appear verbatim in the sample; otherwise the verdict is
   discarded as unsupported. A mechanical filter on hallucination, and worth
   writing up as a methodological contribution.
-- `line_number` is not decoration — it feeds E11 (see Phase 4). SAST tools
-  report line numbers too, so localisation labels are available for confirmed
-  samples from both sides.
+- `line_number` stays in the verdict schema (evidence quality still benefits
+  from asking for it), but it feeds nothing downstream now — E11 is cancelled
+  (§4.5), and `code_cwe` never gained a persisted `line_number` column, so this
+  field only ever lived inside each judge's raw JSON blob, never aggregated.
 - Temperature 0; store the prompt version with every verdict; cache on
   `hash(code + prompt_version + model)` so re-runs are free.
 
@@ -637,13 +641,51 @@ must state that the two sets of runs differ in this respect.
 ### 4.2 E8 — context length (RQ3)
 
 Levels 2048 / 4096 / 8192. Scope note: the thesis already found 2048 truncates
-samples mid-code, so 2048 → 4096 has a known direction. The genuinely open
-question is 8192, and it matters for a specific subpopulation — **Claude-produced
-samples average 586 SLOC** against OpenAI's ~250 and Groq's ~74. Report the
-context-length effect broken down by producer model; a global average will hide
+samples mid-code, so 2048 → 4096 has a known direction. Report the
+context-length effect broken down by producer model — a global average hides
 the only place the effect lives.
 
-8192 with QLoRA will not fit a T4. Plan for A100 or reduce batch size further.
+**8192's necessity, settled with real token counts (2026-09-17)**, not the
+SLOC estimate this section used to cite. Full `cl100k_base` tokenisation of
+all 14,739 docker-successful samples' `code` column:
+
+| Producer | n | mean | median | p95 | max |
+| --- | --- | --- | --- | --- | --- |
+| claude | 4,174 | 4,366 | 4,344 | 6,075 | 6,601 |
+| openai | 7,380 | 1,996 | 1,870 | 3,295 | 5,973 |
+| groq | 3,185 | 601 | 556 | 1,017 | 2,506 |
+
+Corpus-wide: 48.2% of samples exceed 2048 tokens, **16.8% exceed 4096**
+(already a real, active truncation problem — Claude's *mean* alone clears
+4096), and **0.0% exceed 8192** (max observed: 6,601, code only). 8192
+covers the entire corpus with room for prompt-template overhead; 4096 does
+not. This closes the "genuinely open question" framing below — 8192 is not
+speculative, it measurably recovers content 4096 is currently discarding,
+concentrated in the Claude-produced subpopulation as expected.
+
+**Feasibility, 8192 arm — needs A100, not a T4.** QLoRA 4-bit, 7B model,
+seq_len 8192, batch_size 1, gradient checkpointing + flash-attention-2:
+~3.5GB base weights + ~0.5GB adapter/optimiser + ~12-18GB activations ≈
+16-22GB total in the optimistic case (flash-attn compiled, checkpointing
+on) — already above a T4's 16GB with no margin, and considerably worse
+without flash-attention-2 (attention memory becomes O(n²)). Confirms this
+section's original T4 verdict with an actual budget, not just an assertion.
+
+- **Colab tier**: Free (T4-only) and base Colab Pro (no guaranteed A100
+  priority) are both too risky for this arm. Needs **Colab Pro+** (priority
+  A100 access, background execution).
+- **Compute-hour estimate**: ~4,600 training samples × 8192 tokens × ~3
+  epochs ≈ 113M tokens/run; at a rough 2,000-3,000 tok/s QLoRA-7B-on-A100
+  throughput, **~10-11 hours per run**. The 8192 arm alone (2 models × 3
+  seeds) is ~60-65 A100-hours — likely exceeds a single month's standard
+  Pro+ compute-unit allocation.
+- **If budget is tight** (see §7's cut order): drop the 8192 arm to 1 seed
+  instead of 3, and/or run it only on the smaller of the two selected
+  models, and/or restrict it to the Claude-produced subpopulation where the
+  effect concentrates — any of these keeps the 2048/4096/8192 directional
+  finding intact while cutting the A100-hour bill substantially. Do not cut
+  the arm outright: it is the one condition with real, measured content loss
+  behind it, unlike a hypothetical parameter sweep.
 
 ### 4.3 E9 — model size (RQ3)
 
@@ -684,24 +726,27 @@ Expect small differences between the PEFT variants. Report them as mean ± std
 over three seeds and do not describe a difference smaller than the standard
 deviation as a difference.
 
-### 4.5 E11 — data content: localisation (RQ3)
+### 4.5 E11 — data content: localisation (RQ3) — **cancelled, 2026-09-17**
 
-The notes list "the content in the data i.e., problematic line number" as an
-RQ3 parameter. This is the most interesting item on that list and it composes
-with Phase 2's evidence requirement: SAST tools report line numbers, and the
-judge protocol already demands `line_number`, so localisation labels exist on
-both sides for confirmed samples.
+Was: "the content in the data i.e., problematic line number" as an RQ3
+parameter, composing with Phase 2's evidence requirement (SAST tools report
+line numbers, and the judge protocol demands `line_number`, so localisation
+labels were assumed to exist on both sides for confirmed samples).
 
-Two training targets, everything else fixed:
+**Dropped at the user's explicit statement: "satır numarası bilgimiz yok"
+(we don't have line number data).** Verified: `code_cwe` has **no
+`line_number` column at all** — the assumption above was wrong. What exists
+is scattered and inconsistent: some of it might be recoverable by parsing
+`codeql_raw`'s SARIF per-finding locations or individual judges' stored
+`raw_text` JSON, but it was never persisted as a first-class, queryable
+field, isn't available across all sources, and building it now is real new
+extraction work, not a config flip. Not worth it for one RQ3 sub-experiment.
 
-- T1: `CWE-89`
-- T2: `CWE-89 @ line 42` (or CWE plus the vulnerable line verbatim)
-
-Evaluate CWE accuracy for both, plus line-localisation accuracy for T2. If T2
-matches T1 on classification while also localising, that is a strictly stronger
-model and a clear differentiator against the literature — the thesis already
-cites Sovrano et al. on LLMs being "lost in the end" of long files, which is a
-localisation failure.
+Was: two training targets, everything else fixed — T1: `CWE-89`, T2:
+`CWE-89 @ line 42` (or CWE plus the vulnerable line verbatim), evaluating
+CWE accuracy for both plus line-localisation accuracy for T2. Already on
+§7's own cut list as the first item to drop if time runs short; this makes
+that cut permanent rather than conditional.
 
 ### 4.6 E12 — LLM vs. tool stack (RQ6′)
 
@@ -831,13 +876,15 @@ The one item everything else depends on is Phase 1.1's re-scoring harness. Build
 it first; without it every configuration change costs a full re-scan.
 
 **Cut order, if time runs short.** Take these from the bottom up, and stop as
-soon as the schedule fits:
+soon as the schedule fits. E11 and E4 are no longer entries here — both are
+already permanently cancelled (§4.5, §3.2/§0), not conditional on schedule:
 
-1. E11 (localisation) — self-contained, nothing depends on it.
-2. E10's encoder baseline — keep the single-flag PEFT ablations, drop the
+1. E10's encoder baseline — keep the single-flag PEFT ablations, drop the
    encoder.
-3. E5 (label granularity) — E4 alone still answers RQ5.
-4. Snyk **or** CodeQL rather than both — keep CodeQL, it is stronger on Python
+2. E8's 8192-context arm down to 1 seed instead of 3 (see §4.2's feasibility
+   note) before cutting it outright — it is the single most compute-expensive
+   item left in Phase 4.
+3. Snyk **or** CodeQL rather than both — keep CodeQL, it is stronger on Python
    taint and has no quota.
 
 **Do not cut V1.** The validity checks — three seeds, matched pairs,

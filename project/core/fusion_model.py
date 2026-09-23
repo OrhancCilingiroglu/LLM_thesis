@@ -149,9 +149,19 @@ def _scanned_predicate(source: str) -> str:
     }[source]
 
 
+_POOL_FILTERS = {
+    # "vulnerable": target CWE should be present; a VULN vote is a confirmation.
+    "vulnerable": "secure IN ('VULNERABLE', 0)",
+    # "secure": target CWE (the paired/avoided weakness) should be ABSENT; a
+    # VULN vote here is contamination -- a source claiming the weakness the
+    # sample was generated to demonstrate NOT having is actually present.
+    "secure": "secure IN ('SECURE', 1)",
+}
+
+
 def build_vote_matrix(
     db_path: str, docker_status: str = "tested-successful", unrelated_as_abstain: bool = False,
-    judge_mode: str | None = None, strict: bool = False,
+    judge_mode: str | None = None, strict: bool = False, pool: str = "vulnerable",
 ) -> tuple[list[int], dict[str, dict[int, int]]]:
     """Returns (sample_ids, {source: {sample_id: vote}}), vote in {VULN, SEC, ABSTAIN}.
 
@@ -168,9 +178,19 @@ def build_vote_matrix(
     counts as a VULN vote. False (default) = RELAXED_MATCH, the existing
     behaviour. True = STRICT_MATCH, only an exact CWE match counts -- report
     both readings side by side, never one instead of the other.
+
+    `pool` is "vulnerable" (default, existing behaviour) or "secure" -- see
+    `_POOL_FILTERS`. Same vote mechanics either way (does a source's
+    reported CWE relate to this sample's `CWE` column at the chosen
+    strictness); only which rows are read and what a VULN vote *means*
+    changes. `union_label() == VULN` on the vulnerable pool reads as
+    "confirmed"; on the secure pool it reads as "contaminated" -- a clean,
+    trainable secure sample is one where every source's vote is SEC/ABSTAIN.
     """
     if judge_mode is not None and judge_mode not in JUDGE_SOURCE_SETS:
         raise ValueError(f"judge_mode must be None or one of {sorted(JUDGE_SOURCE_SETS)}, got {judge_mode!r}")
+    if pool not in _POOL_FILTERS:
+        raise ValueError(f"pool must be one of {sorted(_POOL_FILTERS)}, got {pool!r}")
     judge_sources = JUDGE_SOURCE_SETS[judge_mode] if judge_mode else ()
     sources = ALL_SOURCES + judge_sources
 
@@ -185,7 +205,7 @@ def build_vote_matrix(
         f"""
         SELECT id, CWE, owasp_zap_authenticated{judge_cwe_cols}, {scanned_cols}
         FROM code_cwe
-        WHERE docker = ? AND secure IN ('VULNERABLE', 0)
+        WHERE docker = ? AND {_POOL_FILTERS[pool]}
         """,
         (docker_status,),
     ).fetchall()
