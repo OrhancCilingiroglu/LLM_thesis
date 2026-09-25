@@ -165,6 +165,57 @@ revisit. Whichever is chosen, state the CWE-count drop explicitly in the
 thesis — it is a direct, visible consequence of choosing strict matching
 over relaxed for the training label, not an incidental detail.
 
+**User decision, 2026-09-25: don't pick one — run E3 across every config.**
+Resolves the "flagged, not decided" note just above. `ground_truth.py`
+extended with `--match strict|relaxed` (§1.3's hierarchy-aware matching was
+never dropped — see the correction earlier in this section — so both
+readings needed to be selectable, not just strict), persisting to separate
+tables (`ground_truth_labels` / `ground_truth_labels_relaxed`) so neither
+overwrites the other. `build_dataset.py` gained a second filter,
+`GROUND_TRUTH_RELAXED`, reading the relaxed table; both `GROUND_TRUTH*`
+filters now also gate **secure** rows consistently with their own match
+rule (previously secure-row rejection always used the legacy strict-only
+`row_correlation`, regardless of which filter was selected for vulnerable
+rows — `_accept_secure()` in `build_dataset.py` fixes this). Also added:
+`--print_stats` now works end-to-end from the CLI, and every run
+auto-writes `<out_dir>/cwe_bucket_counts.csv` (CWE, OWASP category,
+n_secure, n_vulnerable, total) — no more one-off scripts needed to answer
+"how many secure vs. vulnerable per CWE did this config produce."
+
+**Five dataset configs generated and persisted to
+`project/core/dataset_out/`** (JSONL, gitignored by design like the rest of
+this project's dataset outputs — not lost, just not git-tracked; back up
+the directory itself if needed). All single-label (`--multi_label False`,
+per RQ5's rejection above), `max_per_bucket=60` unless noted:
+
+| Folder | corr_filter | min_per_cwe | CWEs | final rows | train/val/test |
+| --- | --- | --- | --- | --- | --- |
+| `ground_truth_strict_mpc15` | GROUND_TRUTH | 15 | 30 | 1,557 | 1,090/155/312 |
+| `ground_truth_relaxed_mpc15` | GROUND_TRUTH_RELAXED | 15 | 122 | 4,964 | 3,476/496/992 |
+| `ground_truth_strict_mpc8` | GROUND_TRUTH | 8 | 43 | 1,962 | 1,374/196/392 |
+| `ground_truth_strict_mpc5` | GROUND_TRUTH | 5 | 49 | 2,126 | 1,489/212/425 |
+| `fusion_f0_mpc15_reference` | FUSION_F0 (legacy, kept as a baseline reference for E3, not a candidate ground-truth) | 15 | 122 | 6,945 | 4,862/695/1,388 |
+
+JSONL row schema, same across all five: `id, prompt, target, code, meta` —
+`prompt` already contains the SAST-tool-style instruction plus the code;
+`target` is `NONE` or a comma-separated CWE list (single-label, so one CWE
+in practice). This is what a fresh session (e.g. a Colab-side one) needs to
+start writing training code without re-deriving anything above.
+
+**Repo status, 2026-09-25:** all of the above code (`ground_truth.py`,
+`build_dataset.py`, this file) is committed on `modular`
+(`bcdb169`, "Add strict/relaxed two-tier ground truth, wire into
+build_dataset.py") and pushed to `origin/modular` by the user. The five
+`dataset_out/` folders are local-only (gitignored `.jsonl`s) — pushing code
+does not carry them; upload them separately (Drive/Colab) when starting
+Phase 3 training.
+
+**Next step, not yet started: E3** — vanilla vs. fine-tuned, all four base
+models, run once per dataset config above (5 configs × 4 models × vanilla/
+fine-tuned, 3 seeds per V1) to see whether the ground-truth choice itself
+changes which two models get selected for Phase 4, not just the headline
+numbers.
+
 **RQ5, rejected 2026-09-06.** Dropped entirely at the user's explicit request
 ("multi label işine girmeyeceğim kesinlikle") — not deferred, not
 descoped-but-kept, rejected. This was not an arbitrary call: an actual check
