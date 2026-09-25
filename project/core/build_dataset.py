@@ -135,7 +135,18 @@ BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
 # this deliberately removes the quality gate — the resulting labels contain
 # whatever noise the tools produce, which is the point when the research
 # question is about tool reliability itself.
-CORR_FILTER_CHOICES = ("FUSION_F0", "FULL", "PARTIAL", "FULL_OR_PARTIAL", "ALL")
+CORR_FILTER_CHOICES = (
+    "GROUND_TRUTH", "GROUND_TRUTH_RELAXED", "FUSION_F0", "FULL", "PARTIAL", "FULL_OR_PARTIAL", "ALL",
+)
+
+# ground_truth.py persists strict and relaxed readings to separate tables
+# (same "both legitimate, keep both" reasoning as fusion_model.py's own
+# strict/relaxed split) -- this maps each GROUND_TRUTH* corr_filter to the
+# table it reads, for both the vulnerable-row gate and the secure-row gate.
+GROUND_TRUTH_TABLE = {
+    "GROUND_TRUTH": "ground_truth_labels",
+    "GROUND_TRUTH_RELAXED": "ground_truth_labels_relaxed",
+}
 
 # What to write as `target` for rows the DB marks secure.
 #   none       — legacy: always "NONE" (the model should find nothing)
@@ -458,15 +469,29 @@ def row_correlation(db_cwe: str, tool_cwes: dict) -> str:
     return "NONE"
 
 
-def _accept_vuln(corr: str, corr_filter: str, f0: bool | None = None) -> bool:
+def _accept_vuln(
+    corr: str, corr_filter: str, f0: bool | None = None, ground_truth: bool | None = None,
+) -> bool:
     """Apply the user-selected correlation filter to a vulnerable row.
 
     `f0` is this row's `fusion_labels.f0_union` value (None if the row
     wasn't in fusion's scope, e.g. not yet scanned by any source) --
     only consulted when corr_filter == "FUSION_F0".
+
+    `ground_truth` is this row's `ground_truth.py`-computed label under
+    the match rule `corr_filter` selects (None if the row hasn't been
+    through `python ground_truth.py --match ...` yet) -- only consulted
+    when corr_filter is "GROUND_TRUTH" (strict, the project's actual
+    ground truth as of 2026-09-24, methodology-plan.md Section 0 -- no
+    fusion of any kind) or "GROUND_TRUTH_RELAXED" (hierarchy-aware,
+    Section 1.3 -- a separate, parallel reading, not blended with strict).
+    FUSION_F0 is kept only for reproducing the pre-2026-09-24 Run 1/2
+    numbers.
     """
     if corr_filter == "ALL":
         return True                      # no correlation gate at all
+    if corr_filter in GROUND_TRUTH_TABLE:
+        return bool(ground_truth)        # None (not yet computed) -> reject
     if corr_filter == "FUSION_F0":
         return bool(f0)                  # None (not in fusion's scope) -> reject
     if corr_filter == "FULL":
@@ -502,6 +527,50 @@ def _load_f0_union(db_path: str) -> dict[int, bool]:
         conn.close()
 
 
+def _load_ground_truth(db_path: str, table_name: str) -> dict[int, bool]:
+    """Reads `ground_truth.py`'s already-persisted two-tier label
+    (methodology-plan.md Section 0, 2026-09-24) from `table_name` --
+    "ground_truth_labels" (strict) or "ground_truth_labels_relaxed"
+    (hierarchy-aware, Section 1.3), per `GROUND_TRUTH_TABLE`. Covers both
+    the vulnerable and secure pools -- `ground_truth.py` writes both to
+    the same table, keyed by `code_id`, so one load serves both the
+    vulnerable-row gate and the secure-row gate below. Read-only -- run
+    `python ground_truth.py --match strict|relaxed --pool vulnerable|secure`
+    first if the DB has changed since; this function does not recompute
+    it, same separation-of-passes reasoning as `_load_f0_union`.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+        ).fetchone()
+        if not exists:
+            return {}
+        return {
+            r[0]: bool(r[1])
+            for r in conn.execute(f"SELECT code_id, label FROM {table_name}").fetchall()
+        }
+    finally:
+        conn.close()
+
+
+def _accept_secure(corr: str, corr_filter: str, ground_truth: bool | None = None) -> bool:
+    """True = keep this secure row (it's clean under the chosen rule).
+
+    `ground_truth` is this row's `ground_truth.py`-computed label (True =
+    flagged/contaminated, False = clean, None = not yet computed) -- only
+    consulted when corr_filter is a GROUND_TRUTH* variant, so a strict- or
+    relaxed-ground-truth dataset gates secure rows the same way it gates
+    vulnerable rows, instead of silently falling back to the legacy
+    exact-match-only `row_correlation` check.
+    """
+    if corr_filter == "ALL":
+        return True
+    if corr_filter in GROUND_TRUTH_TABLE:
+        return ground_truth is not None and not ground_truth
+    return corr == "NONE"
+
+
 def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                  include_db_cwe_in_target=True,
                  burp_min_confidence: str | None = None,
@@ -520,6 +589,10 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
     """
     ids = db.get_ids_by_docker_status("tested-successful")
     f0_union = _load_f0_union(db.db_path) if corr_filter == "FUSION_F0" else {}
+    ground_truth = (
+        _load_ground_truth(db.db_path, GROUND_TRUTH_TABLE[corr_filter])
+        if corr_filter in GROUND_TRUTH_TABLE else {}
+    )
     if stats is not None:
         stats["docker_successful_pool"] = len(ids)
         stats["dropped_too_short"] = 0
@@ -609,8 +682,9 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                 # corr_filter=ALL keeps secure rows even when a tool raised an
                 # alarm. That is intentional in "raw tool consensus" mode: the
                 # alarm itself is the label we want to study, not a reason to
-                # discard the row.
-                if corr_filter != "ALL" and corr != "NONE":
+                # discard the row. GROUND_TRUTH*/legacy filters otherwise
+                # differ in which signal decides "clean" -- see _accept_secure.
+                if not _accept_secure(corr, corr_filter, ground_truth=ground_truth.get(cid)):
                     if stats is not None:
                         stats["dropped_secure_tool_alarm"] += 1
                     continue             # any tool alarm → skip (not clean)
@@ -620,7 +694,7 @@ def collect_rows(db, min_per_cwe, max_per_bucket, scrub_mode="line",
                 # to drop via `corr_filter`. The CWE-level floors below
                 # consult this histogram.
                 cwe_corr_counts[cwe][corr] += 1
-                if not _accept_vuln(corr, corr_filter, f0=f0_union.get(cid)):
+                if not _accept_vuln(corr, corr_filter, f0=f0_union.get(cid), ground_truth=ground_truth.get(cid)):
                     if stats is not None:
                         stats["dropped_vuln_correlation"] += 1
                     continue
@@ -963,17 +1037,33 @@ def main():
                     help="When multi_label is True, whether to also include the DB "
                          "ground-truth CWE in the target list (default True).")
     ap.add_argument("--corr_filter", choices=list(CORR_FILTER_CHOICES),
-                    default="FUSION_F0",
-                    help="Which acceptance gate to apply to vulnerable rows: "
-                         "FUSION_F0 (default — reads fusion_model.py's persisted, "
-                         "hierarchy-aware F0 union label; re-run `python fusion_model.py` "
+                    default="GROUND_TRUTH",
+                    help="Which acceptance gate to apply to vulnerable rows (and, "
+                         "for the two GROUND_TRUTH* filters, to secure rows too — "
+                         "see _accept_secure): "
+                         "GROUND_TRUTH (default since 2026-09-24 — reads "
+                         "ground_truth.py's persisted, strict tool-stack-union "
+                         "label, no hierarchy/relaxed credit, no fusion of any "
+                         "kind; re-run `python ground_truth.py --match strict` "
                          "first if the DB changed since), "
+                         "GROUND_TRUTH_RELAXED (same construction, hierarchy-aware "
+                         "match — ancestor/descendant also count, methodology-plan.md "
+                         "Section 1.3; re-run `python ground_truth.py --match relaxed` "
+                         "first), "
+                         "FUSION_F0 (legacy default 2026-09-08 to 2026-09-24 — "
+                         "reads fusion_model.py's persisted, hierarchy-aware F0 "
+                         "union label; kept only to reproduce pre-2026-09-24 runs), "
                          "FULL (SAST and DAST both detected the DB CWE, exact-match only), "
                          "PARTIAL (only one of SAST/DAST detected it, exact-match only), "
                          "FULL_OR_PARTIAL (legacy default before 2026-09-08), "
                          "ALL (no correlation gate at all — keeps every "
                          "docker-runnable row including secure rows that tools "
                          "flagged; pair with --secure_target tool_union).")
+    ap.add_argument("--print_stats", action="store_true",
+                    help="Print the per-stage row-drop funnel (docker pool -> "
+                         "too-short -> empty-after-scrub -> dedup -> accepted "
+                         "pre-floor -> kept after per-CWE floor -> final) before "
+                         "writing output. Answers 'why did N rows not make it'.")
     ap.add_argument("--secure_target", choices=list(SECURE_TARGET_CHOICES),
                     default="none",
                     help="Target for DB-secure rows: 'none' (default, legacy — "
@@ -997,6 +1087,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     db = DBManager()
+    stage_stats: dict | None = {} if args.print_stats else None
     buckets = collect_rows(db, args.min_per_cwe, args.max_per_bucket,
                            scrub_mode=args.scrub_mode,
                            include_db_cwe_in_target=args.include_db_cwe_in_target,
@@ -1004,7 +1095,28 @@ def main():
                            corr_filter=args.corr_filter,
                            min_full_per_cwe=args.min_full_per_cwe,
                            min_partial_per_cwe=args.min_partial_per_cwe,
-                           exact_per_bucket=args.exact_per_bucket)
+                           exact_per_bucket=args.exact_per_bucket,
+                           stats=stage_stats)
+    if stage_stats is not None:
+        print(f"[stats] {json.dumps(stage_stats, indent=2)}")
+
+    # Per-CWE secure/vulnerable breakdown of the final, post-cap dataset --
+    # `buckets` is already keyed by (cwe, is_secure), so this is a direct
+    # readout, not a recount. Written for every run (cheap, small file) so
+    # "how many secure vs vulnerable per CWE did this config produce" never
+    # needs a one-off script again.
+    cwe_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"secure": 0, "vulnerable": 0})
+    for (cwe, is_secure), rows in buckets.items():
+        cwe_counts[cwe]["secure" if is_secure else "vulnerable"] += len(rows)
+    bucket_csv_path = os.path.join(args.out_dir, "cwe_bucket_counts.csv")
+    with open(bucket_csv_path, "w") as f:
+        f.write("cwe,owasp,n_secure,n_vulnerable,total\n")
+        for cwe in sorted(cwe_counts, key=lambda c: (-cwe_counts[c]["vulnerable"], c)):
+            n_sec = cwe_counts[cwe]["secure"]
+            n_vuln = cwe_counts[cwe]["vulnerable"]
+            f.write(f"{cwe},{cwe_to_owasp(cwe) or ''},{n_sec},{n_vuln},{n_sec + n_vuln}\n")
+    print(f"[info] wrote per-CWE secure/vulnerable breakdown to {bucket_csv_path}")
+
     all_rows = [r for rows in buckets.values() for r in rows]
     print(f"[info] collected {len(all_rows)} rows across "
           f"{len({r['cwe'] for r in all_rows})} CWEs "

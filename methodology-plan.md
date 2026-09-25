@@ -26,7 +26,144 @@ two RQ4s in a thesis is a defence-day problem.
 | RQ3 | How do training and data parameters affect fine-tuned performance? | Finalized |
 | RQ4 | How does the *detection prompt* affect fine-tuned performance? Which prompt components matter? | Finalized |
 | RQ5 | Label format: multi-label bit string (all vulnerabilities) vs. single label (target / most significant) — which is learned better? | **Rejected, 2026-09-06** — user decision: no multi-label work. See note below the table. |
-| RQ6 | How do fine-tuned LLMs compare against the SAST/DAST tool stack? | Reduced scope — see 0.1 |
+| RQ6 | How do fine-tuned LLMs compare against the SAST/DAST tool stack? | **Dropped, 2026-09-24** — see note below the table. |
+
+**Advisor finalized note, 2026-09-24.** The advisor's finalized scope names
+only RQ1–RQ4 — no label-granularity question and no tool-stack comparison.
+Confirmed with the user: this is a real scope cut, not an omission. Two
+consequences:
+
+- **§0.2's granularity reformulation (G1/G2/G3) is cancelled.** It had
+  reoccupied the RQ5 slot after the original label-format question was
+  rejected above; that reoccupation is now moot too. E5 is cancelled — see
+  §1's matrix.
+- **RQ6′ (§0.1, target-CWE recovery as a stand-in for a head-to-head
+  comparison) is cancelled.** E12 is cancelled — see §1's matrix. §0.1's
+  reasoning about why a gold-set-free comparison would have been circular
+  is kept below for the record (and because its target-CWE-recovery
+  machinery is repurposed by the ground-truth decision immediately after),
+  but it no longer drives an experiment.
+
+**Advisor finalized note, 2026-09-24 — ground truth source.** The first pass
+of this note (below the table earlier the same day) framed the all-source
+Dawid–Skene fusion as a kept method-comparison artifact (E1) and left
+strict-vs-hierarchy matching as an open decision. This was narrowed
+further the same day, confirmed explicitly with the user: **no
+Dawid–Skene, no majority vote, no weighted fusion of any kind, anywhere in
+this project — not even as a method comparison.** E1 is **cancelled
+outright** — see §1's matrix and §1.5.
+
+**Hierarchy-aware matching (§1.3) is NOT cancelled — this was
+momentarily misread as covered by "partial match falan da
+kullanmayacağız" and immediately corrected by the user: "hem strict
+raporlama ve db üretimi hem hierarchy devam etmeli" (both strict
+reporting/DB production and hierarchy continue).** The "no partial match"
+instruction scoped out fusion (above), not hierarchy classification. Both
+strict and hierarchy-aware (relaxed) detection continue exactly as §1.3
+describes; ground-truth label construction (below) uses strict exact
+match, and hierarchy classification runs alongside as its own reported
+axis.
+
+What survives, confirmed as the final ground-truth rule:
+
+- **Primary label: tool-stack union, strict match.** VULNERABLE if *any*
+  of the 7 SAST/DAST tools (Bandit, Semgrep, SonarQube, CodeQL, Snyk,
+  ZAP, Burp) reports the sample's exact target CWE; SECURE if none does
+  and at least one tool actually scanned the sample (i.e. the tool stack
+  is not simply silent). This is plain OR across tools — no weighting, no
+  EM, no vote-counting — and it is already what the codebase calls the F0
+  union (`fusion_labels.f0_union`); it just stops being "one fusion method
+  among several" and becomes *the* label. Hierarchy-aware matching (§1.3)
+  is reported alongside this label as a separate strict-vs-relaxed
+  detection-rate breakdown, not folded into the label itself.
+- **Fallback: single best LLM-judge method, tool-stack-silent samples
+  only.** For samples where every tool abstains (no tool scanned it, or no
+  tool could reach a verdict), fall back to one LLM-judge method (blind or
+  guided — decided per §2.3/E2's existing characterisation, not both, not
+  a vote between them). This part is unchanged from the note above and is
+  **not** cancelled — confirmed explicitly ("ek olarak llm as a judge
+  var" — "additionally there is llm as a judge"). It stays because the
+  tool-stack-silent pool would otherwise just be discarded, which is the
+  ~3,700-sample loss §1.0 already flags as the cheapest sample-size gain
+  available.
+- **E2/Phase 2's role is unchanged by this update**: it still picks which
+  single judge method serves the fallback role, using target-CWE recovery
+  rate and evidence-check pass rate on the tool-silent pool (Phase 2
+  acceptance artifacts already contain the numbers needed: `claude_judge_blind`
+  vs `claude_judge_guided`, plus the gpt4 variants). No new scanning or
+  judging required — it is a re-read of existing artifacts, restricted to
+  a single winner rather than a fusion weight.
+- `fusion_model.py`'s Dawid–Skene/majority code is now **dead code for this
+  project's remaining scope** — do not extend it, do not call it for
+  anything new. Whether to delete it outright or leave it as an unused,
+  already-tested module is a housekeeping call, not a methodology one; not
+  addressed here.
+
+**Implemented and run, 2026-09-24 — `project/core/ground_truth.py`.** Builds
+on `fusion_model.build_vote_matrix()`/`union_label()` (vote extraction and
+plain OR only, never `majority_label()`/`fit_dawid_skene()`), persists to a
+new `ground_truth_labels` table. First real numbers, current corpus:
+
+| Pool | n | strict VULNERABLE | strict SECURE | tool-stack silent |
+| --- | --- | --- | --- | --- |
+| vulnerable | 9,202 | 1,139 (12.4%) | 8,063 | 0 (0.0%) |
+| secure | 5,537 | 247 (4.5%, contaminated) | 5,290 | 0 (0.0%) |
+
+**The judge-fallback tier is currently empty: every Docker-successful
+sample already has at least one tool-stack scan.** The ~3,700-sample gap
+§1.0 describes is real (funnel table, "available for training" 6,168 vs.
+"actually used" ~2,494) but is **not** a scanning-coverage gap — it must
+come from a later stage (`collect_rows()`'s per-CWE floor, dedup, or
+bucket cap in `build_dataset.py`). E2/the guided-judge fallback stays
+implemented for when it is needed (a newly generated or newly Docker-
+successful sample the tool batches haven't reached yet), but right now it
+contributes 0 labels and cannot be characterised on an empty pool — the
+"pick the best judge method" analysis (§2.3) has nothing to select over
+until the silent set is non-empty.
+
+Also notable for E0's write-up: strict-match confirmed rate (12.4%) lands
+close to the *original*, pre-fix thesis number (14.3%, computed with the
+buggy regex/comma-string CWE extraction) even after CodeQL and Snyk were
+added — worth investigating in E0 rather than assuming the tool audit
+under-delivered; RELAXED_MATCH's old default number (49.8% on the same
+9,202-sample pool, from `fusion_labels.f0_union`) shows most of the
+apparent detection lift the tool audit produced was via ancestor/descendant
+credit, not exact-match gains. Report both readings side by side, as
+§1.3 already requires.
+
+**`build_dataset.py` wired to the new label, 2026-09-24/25 — and the real
+cost of strict-only ground truth, measured.** `--corr_filter GROUND_TRUTH`
+added (reads `ground_truth_labels`, additive — `FUSION_F0`/`FULL`/`PARTIAL`/
+`FULL_OR_PARTIAL` untouched, still reproduce their documented numbers
+exactly; verified: `FUSION_F0` still gives 6,945 rows / 122 CWEs, matching
+phase1-acceptance-artifacts.md). `GROUND_TRUTH` is now the CLI default.
+Also added `--print_stats`, surfacing the per-stage drop funnel that was
+already implemented but never wired to the CLI (this answers "why didn't a
+run extract everything" directly, going forward, instead of requiring a
+fresh investigation each time).
+
+**Head-to-head, default settings (`min_per_cwe=15, max_per_bucket=60`,
+single-label), current corpus:**
+
+| corr_filter | accepted pre-floor | CWEs surviving floor | final rows | train/val/test |
+| --- | --- | --- | --- | --- |
+| FUSION_F0 (relaxed, old) | 9,871 | 122 | 6,945 | 4,862 / 695 / 1,388 |
+| GROUND_TRUTH (strict, new) | 6,429 | **30** | **1,557** | 1,090 / 155 / 312 |
+
+**This is not a bug and not the ~3,700-sample gap** (that one was
+root-caused and fixed 2026-09-08 — legacy stale-column correlation logic,
+already documented in phase1-acceptance-artifacts.md item 3, unrelated to
+today's work; `FUSION_F0`'s 9,871-accepted/6,945-final numbers above
+confirm that fix still holds). This is the direct, expected cost of
+today's strict-only decision: dropping ancestor/descendant credit removes
+enough confirmed-vulnerable rows per CWE that **92 of 122 previously
+usable CWE classes now fall below the `min_per_cwe=15` floor** and are
+excluded entirely, not just thinned. **Flagged for the user, not decided
+here**: proceed with 30 CWEs / 1,557 rows as-is, lower `min_per_cwe` to
+recover more CWE classes at the cost of noisier per-class estimates, or
+revisit. Whichever is chosen, state the CWE-count drop explicitly in the
+thesis — it is a direct, visible consequence of choosing strict matching
+over relaxed for the training label, not an incidental detail.
 
 **RQ5, rejected 2026-09-06.** Dropped entirely at the user's explicit request
 ("multi label işine girmeyeceğim kesinlikle") — not deferred, not
@@ -47,10 +184,20 @@ single-label, permanently.
 The "New RQ" (specific-vs-generic transfer, §0.2) is **not** affected by
 this: its reformulation into G1/G2/G3 label-granularity conditions (E5) is
 independent of RQ5 — none of G1/G2/G3 is a multi-label bit-string, all
-three are single-target formats at different specificity levels. E5 stays
-in scope unless separately cut.
+three are single-target formats at different specificity levels.
+~~E5 stays in scope unless separately cut.~~ **E5 was itself cut, 2026-09-24
+— the advisor's finalized RQ list is RQ1–RQ4 only. See the note above this
+table.** §0.2 below is kept for the record of why the reformulation was
+correct engineering, not because it still drives an experiment.
 
-### 0.1 RQ6 without a human gold set
+### 0.1 RQ6 without a human gold set — cancelled 2026-09-24, kept for the record
+
+**This section no longer drives an experiment.** The advisor's finalized
+scope is RQ1–RQ4; RQ6/RQ6′ and E12 are dropped (see the note above the RQ
+table in §0). The reasoning below is kept because the target-CWE-recovery
+machinery it describes is exactly what E2 now uses to pick the gap-filling
+judge method for ground-truth construction — read it as background for
+that, not as a live research question.
 
 **Scope decision: manual annotation is out.** There is not enough time left to
 hand-label a gold set, so everything below is built to work without one. The
@@ -133,19 +280,19 @@ the thesis as-is.
 
 | Exp | Name | RQ | Phase | Output |
 | --- | --- | --- | --- | --- |
-| E0 | Tool-stack audit + expansion (Snyk, CodeQL, hierarchy matching) | — (dataset) | 1 | Detection-rate before/after table |
-| E1 | Parallel judgment + fusion model comparison (union / majority / Dawid-Skene) | — (dataset) | 1 | Label-quality vs. dataset-size curve |
-| E2 | Source characterisation without gold: target-CWE recovery, agreement matrix, evidence-check rate | RQ6′ input | 2 | Per-source reliability table |
+| E0 | Tool-stack audit + expansion (Snyk, CodeQL, hierarchy matching), strict-match ground truth (tool-stack union + judge fallback on the silent pool) | — (dataset) | 1 | Detection-rate before/after table |
+| ~~E1~~ | ~~Parallel judgment + fusion model comparison (union / majority / Dawid-Skene)~~ | — (dataset) | — | **Cancelled 2026-09-24** — no fusion of any kind, anywhere; ground truth is plain tool-stack union, see §0 note |
+| E2 | Judge-method selection for tool-silent samples: target-CWE recovery, agreement matrix, evidence-check rate per method | ground-truth construction (§0's 2026-09-24 note) | 2 | Per-method reliability table; picks the gap-filling judge method |
 | E3 | Stage-1: all base models, vanilla vs. fine-tuned | RQ1, RQ2 | 3 | Baseline comparison; selects 2 models |
 | ~~E4~~ | ~~Label format: single vs. multi-label bit string~~ | ~~RQ5~~ | — | **Cancelled 2026-09-06** — RQ5 rejected, see §0 note |
-| E5 | Label granularity: G1 / G2 / G3 | RQ5 | 3 | Granularity comparison table |
-| E6 | Detection-prompt component ablation | RQ4 | 3 | Prompt-component contribution table |
+| ~~E5~~ | ~~Label granularity: G1 / G2 / G3~~ | ~~RQ5~~ | — | **Cancelled 2026-09-24** — advisor finalized scope is RQ1–RQ4 only, see §0 note |
+| E6 | Detection-prompt component ablation (incl. guided vs. blind wording, train- and test-time) | RQ4 | 3 | Prompt-component contribution table |
 | E7 | Stage-2: epoch count sweep | RQ3 | 4 | Parameter curve |
 | E8 | Stage-2: context length sweep (2048 / 4096 / 8192) | RQ3 | 4 | Parameter curve |
 | E9 | Stage-2: model size (3B vs 7B, within and across families) | RQ3 | 4 | Parameter curve |
 | E10 | Adaptation method: QLoRA vs DoRA vs rank sweep vs encoder classifier | RQ3 | 4 | Parameter/method table |
 | ~~E11~~ | ~~Data content: with vs. without problematic line number in the target~~ | ~~RQ3~~ | — | **Cancelled 2026-09-17** — no `line_number` data exists, see §4.5 |
-| E12 | Fine-tuned models vs. tool stack, scored on target-CWE recovery | RQ6′ | 4 | Head-to-head table |
+| ~~E12~~ | ~~Fine-tuned models vs. tool stack, scored on target-CWE recovery~~ | ~~RQ6′~~ | — | **Cancelled 2026-09-24** — advisor finalized scope drops RQ6, see §0 note |
 | V1 | Validity checks: matched pairs, length-matched, comment-stripped, seeds | all | 4 | "Threats to validity" subsection |
 
 ---
@@ -217,7 +364,7 @@ everything below stays exactly as it is today.
 **What this costs, so it is a choice and not an accident.** Per-tool columns mean
 one row per sample, so a sample with three CodeQL findings stores them together
 in `codeql_raw` and line numbers are only reachable by parsing that JSON. That is
-fine for scoring and for the fusion matrix, which need one vote per source. It is
+fine for scoring and for the tool-stack union, which need one vote per source. It is
 mildly awkward for what would have been E11 (localisation, per-finding rows) —
 moot now that E11 is cancelled outright (§4.5): no `line_number` field exists
 to build it from regardless of row shape.
@@ -225,7 +372,9 @@ to build it from regardless of row shape.
 **Scoring moves out of scanning.** This is the one non-negotiable part, and it is
 a new module, not a change to existing ones: a function that takes findings plus
 a target CWE and returns a detection outcome. The §1.3 hierarchy rule, the strict
-and relaxed comparison, and every re-score afterwards live there.
+and relaxed comparison, and every re-score afterwards live there. Ground-truth
+label construction (§0's note) uses the strict result; the relaxed result is
+reported separately, not blended into the label.
 
 **Regression test:** backfilling the new columns from existing data and
 re-scoring must reproduce **1,224 / 8,544** exactly. Run this before adding any
@@ -334,6 +483,13 @@ was there to detect.
 
 ### 1.3 Hierarchy-aware CWE matching
 
+**Confirmed in scope, 2026-09-24 (an earlier pass of this document briefly
+cancelled this section reading "partial match falan da kullanmayacağız" as
+covering it; the user corrected that immediately after: "hem strict
+raporlama ve db üretimi hem hierarchy devam etmeli" — both strict
+reporting/DB production and hierarchy continue). What the "no partial
+match" instruction actually scoped out was fusion (§1.5/E1), not this.**
+
 Detection currently requires an exact CWE match, while the cross-CWE matrix
 (Fig. 5.10) shows tools routinely reporting generic ancestors (CWE-668, 693,
 497).
@@ -342,7 +498,9 @@ Build the CWE relationship graph from MITRE's catalogue XML
 (`Related_Weaknesses`, view CWE-1000) and classify each outcome as `exact`,
 `ancestor`, `descendant`, `sibling`, `unrelated` or `none`. Report detection
 rate under both strict and relaxed rules; the gap between them is itself a
-result about how tools report.
+result about how tools report. **DB production and the ground-truth label
+(§0's note) use strict exact match**; hierarchy classification runs
+alongside as its own reported axis, not a redefinition of the label.
 
 Cheapest large gain in the plan.
 
@@ -418,71 +576,55 @@ localisation is ever revisited.
 
 No additional DAST scanners. Coverage is not the bottleneck there.
 
-### 1.5 Architecture change: parallel judgment + fusion (E1)
+### 1.5 ~~Architecture change: parallel judgment + fusion (E1)~~ — cancelled 2026-09-24
 
-This is the meeting's key methodological question, and the answer is that the
-parallel design is strictly better — the sequential cascade should be treated as
-a budget fallback, not the design.
+**This section's recommendation was overridden by the advisor's own design
+choice and no longer describes what gets built.** Kept in full below for
+the historical record — it explains the science tradeoff the advisor's
+choice accepts — but E1 (the fusion-method comparison this section
+proposed) is cancelled, see §1's matrix.
 
-**Current pipeline (sequential):**
-producer LLM generates → same LLM self-checks 3× → SAST/DAST filters → label.
+Was: the meeting's key methodological question was framed as sequential
+cascade vs. parallel-with-a-label-model, and this section argued parallel
+was strictly better, because a pure cascade (tools first, LLM decides the
+fate of what tools miss) means the LLM panel only ever sees the hard
+cases — you never learn how it behaves on the easy ones, so you can never
+estimate its reliability or weight it against the tools. The recommended
+fix was every source scoring every sample independently (SAST + DAST +
+2-3 LLM judges + the down-weighted producer self-check, each a
+`VULNERABLE`/`SECURE`/`ABSTAIN` labelling function), fused via F0 (1-of-n
+union) / F1 (majority) / F2 (Dawid–Skene) / F3 (meta-classifier),
+compared against each other as E1, with F2 expected to win because it
+estimates each source's reliability from agreement patterns and produces
+a confidence per label.
 
-Two structural problems. The self-check is the *producer grading its own
-homework*, which is the weakest possible evidence and sits at the most decisive
-point in the funnel. And the tool stack acts as a gate, so a sample the tools
-miss is simply lost — its 86% miss rate becomes an 86% data loss rate.
+**What actually got adopted, confirmed 2026-09-24: the cascade, not the
+parallel design** — tool-stack union (strict match) as the primary label,
+single best-performing LLM-judge method as the fallback for samples the
+tool stack is silent on, no fusion of any source votes at all (§0's note).
+This is exactly the "cascade variant" this section argued against on
+scientific grounds. That objection **still holds as a stated limitation**
+and belongs in the thesis in the same words used here: the judge's
+reliability is only ever characterised on the tool-silent pool (via E2),
+never validated against the easy cases the tools already resolve, so its
+estimated recovery rate cannot be assumed to generalise to samples it
+never sees in production use of this label. The advisor's instruction
+overrides the objection as a design choice, not as a rebuttal of it.
 
-**The cascade variant** (*More or less determined* item 1b: tools first, LLMs
-decide the fate of what tools miss) fixes the data loss but not the science.
-The LLM panel only ever sees the hard cases, so you never learn how it behaves
-on the easy ones — which means you can never estimate its reliability, and
-therefore can never weight it against the tools.
-
-**Recommended: parallel with a label model.**
-
-Every source scores every sample independently. Each source becomes a *labelling
-function* emitting `VULNERABLE` / `SECURE` / `ABSTAIN` for the sample's target
-CWE:
-
-| Source group | Members |
-| --- | --- |
-| SAST | Bandit, Semgrep, SonarQube, CodeQL, Snyk |
-| DAST | OWASP ZAP, Burp Suite |
-| LLM judges | 2–3 frontier API models (see Phase 2.2) |
-| Weak prior | producer self-check (kept, but explicitly down-weighted) |
-
-Fusion methods, compared against each other as E1:
-
-| Method | Needs gold? | Notes |
-| --- | --- | --- |
-| F0: 1-of-n union | No | Current thesis behaviour; the baseline to beat |
-| F1: majority vote | No | Trivial, but treats a broken tool as equal to a good one |
-| F2: **Dawid–Skene / EM label model** | No (gold for validation only) | Estimates each source's sensitivity and specificity from agreement patterns alone, then emits a *probabilistic* label |
-| F3: meta-classifier on the vote vector | Yes | Likely to overfit on 200–300 gold samples; report only if F2 underperforms |
-
-F2 is the answer to "bu ikisinin yargılarını birleştirecek başka bir yöntem".
-It is established, citable work (Dawid & Skene 1979; Snorkel, Ratner et al.
-2017), and it does something the union rule cannot: it produces a confidence per
-label. That confidence directly addresses the sample-size problem — instead of a
-binary keep/discard, you get a **dataset-size vs. label-confidence curve**, and
-the threshold becomes a tunable parameter feeding RQ3.
-
-**Cost.** Running the judge panel on all 13,434 Docker-successful samples rather
-than only the 7,320 unconfirmed is roughly 2× — not prohibitive. At ~4k tokens
-per sample that is ~55M input tokens per judge. Start with a stratified 3,000-
-sample subset, measure, then decide whether the full run pays for itself. If
-budget forces a cut, run parallel on a stratified subset large enough to fit the
-label model and cascade for the remainder — but say so in the thesis, because
-the label model's accuracy estimates then come from a subsample.
+`fusion_model.py`'s F0/F1/F2/F3 implementation (already built and tested)
+is not deleted by this decision, just unused for anything new — see §0's
+note.
 
 ### Phase 1 acceptance artifacts
 
 1. Detection-rate table: strict/old config → strict/new config → hierarchy-aware,
    broken down per tool and per OWASP category, with configuration fixes and
    genuine tool additions reported separately.
-2. Fusion comparison (F0–F2) with the dataset-size vs. confidence curve.
+2. ~~Fusion comparison (F0–F2) with the dataset-size vs. confidence curve.~~
+   **Cancelled 2026-09-24 — E1 dropped, see §1.5.**
 3. The updated funnel table, with the usable-sample count against the 8,000–
-   12,000 target.
+   12,000 target, and the tool-stack-union / judge-fallback split (§0's note)
+   shown explicitly — how many usable samples come from each tier.
 
 ---
 
@@ -495,31 +637,39 @@ annotation time:
 
 **The target CWE as a weak reference.** Every judge and every tool can be scored
 on how often it recovers the generation-time target CWE. Noisy, independent of
-both parties, free. This is what feeds RQ6′ (§0.1) and it is also enough to
-sanity-check a judge that has gone badly wrong.
+both parties, free. RQ6′ (§0.1) is cancelled, but this same recovery rate is
+what E2 uses to pick which judge method fills the tool-silent gap (§0's
+2026-09-24 ground-truth note) — it is also enough to sanity-check a judge
+that has gone badly wrong.
 
-**The label model's own reliability estimates.** Dawid–Skene infers each
-source's sensitivity and specificity from agreement patterns alone — that is the
-entire point of the method, and the reason it was chosen in Phase 1.5 over a
-plain majority vote. Gold data was only ever going to *validate* those
-estimates, not produce them.
-
-What this costs, stated for the write-up: the reliability figures are
-**model-estimated, not measured**. Dawid–Skene assumes sources err
-independently, and that assumption is visibly shaky here — Bandit and Semgrep
-share rule heritage, and two frontier LLM judges may share the same blind spots.
-Correlated errors inflate the estimated reliability of a correlated group. Say
-so, and report the source-agreement matrix so a reader can see the correlation
-structure and judge for themselves.
+**~~The label model's own reliability estimates~~ — moot, 2026-09-24: no
+label model.** This subsection originally relied on Dawid–Skene inferring
+each source's sensitivity/specificity from agreement patterns, as the
+reason gold data was skippable. §1.5 is cancelled, so there is no label
+model producing those estimates any more. What replaces it: judge
+reliability for the fallback role is now **only** the raw target-CWE
+recovery rate and evidence-check pass rate per method, measured directly
+on the tool-silent pool (E2, §2.3 below) — a simpler, weaker, but
+model-free measurement. State plainly in the write-up that this is a raw
+rate against a noisy reference, not a reliability estimate in the
+Dawid–Skene sense; there is no correlated-error correction of any kind
+now, so if the chosen judge method and the tool stack happen to share a
+blind spot, nothing here would detect it. The source-agreement matrix
+(§2.3) is still worth reporting as a diagnostic, just not as an input to
+any weighting.
 
 ### 2.2 Judge design
 
 - **Judges must not be the students.** Judges are frontier API models
   (GPT-4.1, Claude, optionally a third); the fine-tuned models are Qwen /
   Mistral / Llama. Same-family judging adds no information.
-- **Keep the producer self-check, but demote it.** It stays in the pipeline as a
-  weak labelling function inside the fusion model, where its measured
-  reliability determines its weight, instead of acting as a hard gate.
+- **Producer self-check's role is now unclear — flag for the advisor, don't
+  guess.** It was previously kept as a down-weighted labelling function inside
+  the fusion model (§1.5); with fusion cancelled outright, there is no
+  mechanism left for it to feed into. It is not part of the confirmed
+  two-tier rule (tool-stack union, then single judge fallback — §0's note).
+  Default assumption until told otherwise: it plays no role in ground truth
+  construction; confirm this explicitly rather than reviving it informally.
 - **Structured output with mandatory evidence:**
 
 ```json
@@ -560,15 +710,20 @@ the section:
    is hallucinating regardless of whether its verdicts happen to agree with
    anything.
 
-Add the Dawid–Skene estimated sensitivity/specificity per source alongside these,
-clearly labelled as estimates.
+~~Add the Dawid–Skene estimated sensitivity/specificity per source alongside
+these, clearly labelled as estimates.~~ **Cancelled 2026-09-24 — no
+Dawid–Skene, no estimated sensitivity/specificity of any kind.** The three
+items above (recovery rate, agreement matrix, evidence-check pass rate) are
+what E2 has to select the fallback judge method with; there is no fourth,
+model-derived figure.
 
 ### Phase 2 acceptance artifacts
 
-Per-source table (target-CWE recovery, evidence-check pass rate, estimated
-sensitivity/specificity), the source-agreement matrix, and the recovered-sample
-count: how many previously-discarded samples the fusion model labels above
-threshold with supported evidence.
+Per-method table (target-CWE recovery, evidence-check pass rate) on the
+tool-stack-silent pool, the source-agreement matrix, the method picked as
+the fallback judge and why, and the recovered-sample count: how many
+previously tool-stack-silent samples that method labels with supported
+evidence.
 
 ---
 
@@ -580,14 +735,17 @@ parameter work on the two best models.
 ### 3.1 E3 — vanilla vs. fine-tuned across all base models (RQ1, RQ2)
 
 All four existing base models (Qwen2.5-7B, Qwen2.5-3B, Mistral-7B,
-Llama-3.2-3B), baseline and fine-tuned, on the Phase-1 dataset with the fusion
-labels.
+Llama-3.2-3B), baseline and fine-tuned, on the Phase-1 dataset with the
+**two-tier ground-truth label** (§0's 2026-09-24 note): strict tool-stack
+union verdict where the tool stack has one, best-performing judge method
+(per E2) where it does not. No Dawid-Skene, no fusion of any kind — E1 is
+cancelled outright, not kept as a comparison artifact (§1.5).
 
 **Model selection must not touch the test set.** Pick the top two on the
 *validation* split. If the two models carried into Stage 2 were chosen by test
 performance, every Stage-2 number is contaminated by selection bias, and this is
 exactly the kind of thing a jury catches. Freeze the test set now and do not
-look at it until E12.
+look at it.
 
 Three seeds per configuration — see V1.
 
@@ -602,10 +760,13 @@ report them with the confound caveat already written into §5.3.1, nothing
 more. See §0's rejection note for the supporting data (median 5-6 distinct,
 mostly-unrelated CWEs per sample in a naive multi-label target).
 
-### 3.3 E5 — label granularity (RQ5)
+### 3.3 ~~E5 — label granularity (RQ5)~~ — cancelled 2026-09-24
 
-Conditions G1 (CWE), G2 (OWASP), G3 (hierarchical: category then CWE), as
-defined in §0.2. G3 vs. G1 is the comparison that carries the section.
+Was: conditions G1 (CWE), G2 (OWASP), G3 (hierarchical: category then CWE),
+as defined in §0.2, with G3 vs. G1 as the carrying comparison. Dropped
+because the advisor's finalized RQ list is RQ1–RQ4 only — no granularity
+question. Not re-run, not descoped-but-kept: cancelled the same way E4 and
+E11 were.
 
 ### 3.4 E6 — detection-prompt ablation (RQ4)
 
@@ -618,6 +779,17 @@ Components to ablate in the prompt that asks the model to detect:
 | Output format constraint | strict comma-separated / free text |
 | Few-shot examples | 0 / 2 / 4 |
 | Reasoning | direct answer / brief reasoning before answer |
+
+**Guided vs. blind, crossed at train time and test time (advisor's explicit
+ask, 2026-09-24).** "Candidate CWE list: provided/absent" above is the
+guided/blind axis, but it must be varied **independently** at fine-tuning
+time and at evaluation time, not just once: train-guided/test-guided,
+train-guided/test-blind, train-blind/test-guided, train-blind/test-blind.
+The two matched cells are the ordinary ablation; the two mismatched cells
+are what actually answers "what happens when the wording changes between
+training and test" rather than only "does guidance help." This reuses the
+existing `claude_judge_blind` / `claude_judge_guided` prompt pair as the
+guided/blind wording template rather than inventing a new one.
 
 **Critical caveat.** Fine-tuning bakes in one prompt format. A fine-tuned model
 evaluated under a different prompt will degrade sharply, and that degradation is
@@ -748,25 +920,19 @@ CWE accuracy for both plus line-localisation accuracy for T2. Already on
 §7's own cut list as the first item to drop if time runs short; this makes
 that cut permanent rather than conditional.
 
-### 4.6 E12 — LLM vs. tool stack (RQ6′)
+### 4.6 ~~E12 — LLM vs. tool stack (RQ6′)~~ — cancelled 2026-09-24
 
-Head-to-head on a held-out set drawn from **all** Docker-successful samples, not
-only the tool-confirmed ones: the two selected fine-tuned models, their
-baselines, the public API models, and each SAST/DAST tool, all scored by the
-same harness on recovery of the generation-time target CWE.
-
-Two rules that make the difference between defensible and circular:
-
-- **The held-out set must include samples no tool confirmed.** Restricting it to
-  the confirmed pool re-introduces exactly the selection bias that made the
-  original comparison meaningless.
-- **Every table caption says "against the generation-time target CWE", not
-  "accuracy".** The reference is noisy and the reader must be told which
-  reference is in use.
-
-Report the tool stack's number on the same held-out set for context, and expect
-it to be low by construction on the unconfirmed portion — that is a property of
-the sampling, not a finding, and must be stated as such.
+Was: a head-to-head on a held-out set drawn from all Docker-successful
+samples (the two selected fine-tuned models, their baselines, the public
+API models, and each SAST/DAST tool, all scored on recovery of the
+generation-time target CWE), designed specifically to avoid the selection
+bias of restricting to the tool-confirmed pool. Dropped because the
+advisor's finalized RQ list is RQ1–RQ4 only — no tool-stack comparison
+question. Kept here, not deleted, because the reasoning (why the held-out
+set must include tool-unconfirmed samples, why every caption must name the
+reference as noisy) is the same reasoning behind the E2 gap-filling design
+in §0's ground-truth note, just applied there to picking a label instead
+of to comparing model families.
 
 ### 4.7 V1 — validity checks
 
@@ -809,8 +975,8 @@ what was deliberately not attempted.
 | **DPO / ORPO / GRPO** (changing the training objective) | Attractive for the hallucination and verbosity problem, and the task has a mechanically checkable reward. Out of scope: not requested, high VRAM, and RQ3 is about parameters, not objectives. Future Work. |
 | **Full fine-tuning, GaLore, prompt/prefix tuning** | Full FT of 7B does not fit the available hardware; GaLore needs more VRAM than QLoRA, defeating the constraint being worked under; prompt/prefix tuning is too weak for structured output. Mention in the RQ3 write-up as considered-and-rejected, with these reasons. |
 | **Bearer, Opengrep, additional DAST scanners** | Marginal on top of Snyk and CodeQL. Tool count is not the bottleneck; configuration quality is. |
-| **RQ6 in its original form** ("which is better") | Circular without ground truth. Replaced by RQ6′ (§0.1): recovery of the generation-time target CWE, on a held-out set that includes tool-unconfirmed samples, with the reference's noisiness stated in every caption. |
-| **"Specific vs. generic" as a standalone RQ, in its literal form** | One direction is a table lookup, the other is ill-posed. Absorbed into RQ5 as the granularity condition (§0.2). |
+| **RQ6, in every form (original and RQ6′)** | Original form circular without ground truth; RQ6′ (§0.1) was the gold-set-free fix. Both are moot: **the advisor's finalized scope, 2026-09-24, is RQ1–RQ4 only** — no tool-stack-comparison question at all. E12 cancelled with it. |
+| **"Specific vs. generic" as a standalone RQ, and its G1/G2/G3 granularity reformulation (E5)** | The literal form doesn't survive scrutiny (one direction is a table lookup, the other ill-posed); the granularity reformulation (§0.2) fixed that, but is itself now out of scope — **advisor's finalized RQ list, 2026-09-24, is RQ1–RQ4 only.** |
 | **SonarQube as a headline tool, if the deployment is Community edition** | Zero detections is then a licensing artefact, not a result. Either license Developer edition or report it as a configuration limitation and demote it. |
 
 ### 5.1 The one automated route back to real ground truth
@@ -834,10 +1000,12 @@ HTTP. Adding a probe step is a small extension of it:
   in the response body.
 
 A successful exploit is **ground truth** — not a tool's opinion, not a model's
-opinion. Even on two CWEs this changes what the thesis can say: RQ6 can be
-answered properly on that subset, the tool stack's true false-negative rate
-becomes measurable there, and the label model's estimated reliabilities can
-finally be validated against something real.
+opinion. RQ6 is dropped (§5's table above), so this is no longer framed as
+answering it, but the value doesn't disappear: even on two CWEs, the tool
+stack's true false-negative rate becomes measurable there, and — more
+relevant now — **the E2 gap-filling judge-method choice (§0's 2026-09-24
+ground-truth note) can finally be validated against something real** rather
+than only against agreement-matrix proxies.
 
 A failed probe is weak evidence and must be recorded as "not exploitable by this
 probe", never as "secure".
@@ -867,10 +1035,10 @@ Tracked here because they gate the write-up rather than the code:
 
 | Phase | Contents | Effort | Blocks |
 | --- | --- | --- | --- |
-| 1 | Adapter refactor, tool audit, Snyk + CodeQL, hierarchy matching, parallel fusion | ~2 weeks | Everything — changes the dataset |
-| 2 | Judge panel, source characterisation | ~1 week | Fusion weights, Phase 4 test set |
-| 3 | E3–E6: model selection, label format, granularity, prompt | ~2 weeks | Selects the 2 models for Phase 4 |
-| 4 | E7–E12 + V1 | ~3 weeks | Results chapter |
+| 1 | Adapter refactor, tool audit, Snyk + CodeQL, hierarchy matching, strict tool-stack-union ground truth | ~2 weeks | Everything — changes the dataset |
+| 2 | Judge panel, source characterisation, gap-filling judge-method selection (E2) | ~1 week | Ground-truth label construction, Phase 4 test set |
+| 3 | E3, E6: model selection, prompt ablation | ~2 weeks | Selects the 2 models for Phase 4 |
+| 4 | E7–E10 + V1 | ~3 weeks | Results chapter |
 
 The one item everything else depends on is Phase 1.1's re-scoring harness. Build
 it first; without it every configuration change costs a full re-scan.
