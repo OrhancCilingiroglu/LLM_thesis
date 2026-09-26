@@ -36,9 +36,8 @@ sharing the same task, product, style and producer model.
 6. **Fine-tuning & evaluation** — QLoRA fine-tuning of open-weight LLMs runs
    on Google Colab (A100/T4), not locally; see `colab_outputs/`.
 
-`methodology-plan.md` is the current single source of truth for active work
-(research questions, experiment matrix, phase gates). `phase1-` and
-`phase2-acceptance-artifacts.md` hold the corresponding results snapshots.
+`phase1-` and `phase2-acceptance-artifacts.md` hold results snapshots for
+each completed phase (detection rates, label fusion, LLM judge panel).
 
 ## Repository layout
 
@@ -92,7 +91,7 @@ development environment as of 2026-09-26.)
 | SonarQube | Community Edition (server) | SAST; taint analysis (injection rules) is not available in Community Edition — see known issues |
 | OWASP ZAP | 2.17.0 (`zaproxy` Python client 0.4.0) | DAST, API mode |
 | Burp Suite Professional | — (REST API enabled, `http://127.0.0.1:1337`) | DAST |
-| CodeQL CLI | 2.26.4 (measurements in `methodology-plan.md` were taken at 2.20.3) | batch SARIF scan |
+| CodeQL CLI | 2.26.4 (earlier measurements in this doc were taken at 2.20.3) | batch SARIF scan |
 | Snyk CLI | 1.1307.0 | batch SARIF scan, ~100 tests/billing-period on the free plan |
 
 Every tool's version is also recorded per-run in the database (`<tool>_version`
