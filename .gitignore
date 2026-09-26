@@ -19,3 +19,4 @@ CWE_Research
 *code_cwe*
 .venv
 src/tools/codeql
+CLAUDE.md
