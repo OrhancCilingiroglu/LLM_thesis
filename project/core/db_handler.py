@@ -245,9 +245,9 @@ class DBManager:
 
         query = f"UPDATE code_cwe SET {tool} = ? WHERE id = ?"
         # timeout=30 (default is 5s): long-running batch scans (ZAP especially)
-        # hit "database is locked" twice in one run when another process
-        # (another Claude Code session on this machine, observed via `ps`)
-        # briefly held a write lock on the same code_cwe.db -- the crash was
+        # hit "database is locked" twice in one run when another process on
+        # this machine (observed via `ps`) briefly held a write lock on the
+        # same code_cwe.db -- the crash was
         # in the commit here specifically. A longer wait is safe (this is a
         # single-row UPDATE, not a long transaction) and avoids losing an
         # otherwise-successful scan to a few seconds of lock contention.

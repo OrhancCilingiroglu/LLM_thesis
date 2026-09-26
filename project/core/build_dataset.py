@@ -114,9 +114,9 @@ BURP_CONFIDENCE_LEVELS = ("tentative", "firm", "certain")
 # owasp_zap, owasp_zap_authenticated, burpsuite). Read-only: build_dataset.py
 # never recomputes fusion itself, it only reads the persisted artifact
 # (`python fusion_model.py` must be re-run first if the DB has changed since
-# fusion_labels was last written) -- "scoring must not live inside scanning"
-# per CLAUDE.md, and re-scoring here would just duplicate a computation that
-# already exists and is independently tested.
+# fusion_labels was last written) -- scoring must not live inside scanning,
+# and re-scoring here would just duplicate a computation that already exists
+# and is independently tested.
 #
 # FULL / PARTIAL / FULL_OR_PARTIAL are the legacy correlation-based gates
 # (SAST hit AND/OR/XOR DAST hit on the DB CWE, exact-match only, no
