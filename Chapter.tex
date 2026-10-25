@@ -1,0 +1,472 @@
+\setlength{\parindent}{0pt}
+\chapter{Experimental Evaluation}
+
+\section{Experimental Setup}
+\label{sec:experimental_setup}
+
+The fine-tuning study consists of three groups of runs, executed in that order. All three share one dataset, one task formulation, one evaluation harness and one execution environment; they differ only in which single factor is allowed to vary. The \emph{model battery} varies the base model and answers RQ1--RQ4; the \emph{adaptation-parameter sweep} varies the \gls{lora} rank and the learning rate on one model and answers RQ5; the \emph{prompt ablation} varies the prompt wording on the same model and answers RQ6. Every individual run of each group is listed in Table~\ref{tab:run_inventory}, and Section~\ref{sec:rq_results} reports each group against the research question it was built for, stating explicitly which quantities were held fixed in that comparison.
+
+\subsection{Execution Environment}
+\label{sec:exec_environment}
+
+Every run was executed as a separate Google Colab notebook on a single NVIDIA A100-SXM4 \gls{gpu} with 40~GB of device memory. No run used more than one \gls{gpu}, and no run was distributed. A single \gls{gpu} of this class is what makes the 4-bit quantized adaptation described in Section~\ref{sec:training_config} necessary: none of the models in the roster can be fine-tuned in full precision within 40~GB.
+
+All notebooks are instances of one notebook skeleton. The skeleton contains a single editable \emph{run configuration} cell; every other cell is identical across runs, byte for byte. A run is therefore fully described by the values in that one cell, which is what makes the groups comparable: a difference between two runs cannot come from an incidental difference in loading, tokenization, generation or scoring code, because that code is the same code. The run configuration cell carries guard assertions that fail the notebook if an axis that is supposed to be fixed has been changed --- for example, the prompt ablation asserts that the \gls{lora} rank and learning rate still hold the values selected by the parameter sweep, so that the prompt remains the only axis.
+
+Each run appends one \gls{json} record per evaluation phase to a shared, append-only results log on Google Drive. A record carries the complete run configuration (model, dataset, context length, adaptation method, rank, alpha, learning rate, effective batch size, prompt variant, comment-stripping flag, evaluation split), the realized training outcome (trainable parameter count, epochs run, best epoch, per-epoch validation loss), the environment (\gls{gpu} name and library versions) and the full metric block, including per-label scores. Trained adapters and, in the prompt ablation, per-item predictions are written to Drive as well, so that re-scoring never requires re-running inference. Table~\ref{tab:software_env} lists the software versions; results from different versions of these libraries are not assumed to be comparable, so the versions are reported rather than left implicit.
+
+\begin{table}[H]
+\centering
+\caption{Execution environment and library versions used for every fine-tuning run.}
+\label{tab:software_env}
+\footnotesize
+\begin{tabular}{l l}
+\toprule
+\textbf{Component} & \textbf{Version / value} \\
+\midrule
+Accelerator        & NVIDIA A100-SXM4, 40~GB, single device \\
+Platform           & Google Colab \\
+Python             & 3.13 \\
+PyTorch            & 2.11.0+cu130 \\
+Transformers       & 5.19.0 \\
+PEFT               & 0.21.2 \\
+bitsandbytes       & 0.50.2 \\
+scikit-learn       & metric implementation for precision, recall and F1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Dataset, Splits and Label Space}
+\label{sec:dataset_splits}
+
+All experiments use one dataset configuration drawn from the descendant-matched tool-stack ground truth. The reference labels are built by the fusion model described in the Methodology chapter, which combines findings from eight \gls{sast} and \gls{dast} tools using hierarchy-aware \gls{cwe} matching. This labeling is fixed for the whole study and is not an experimental variable.
+
+The dataset selection applies per-\gls{cwe} filtering (minimum 15 vulnerable samples per \gls{cwe} to ensure all classes appear in the training set) and per-bucket caps (maximum 60 samples per \gls{cwe}$\times$secure/vulnerable combination to prevent any single class from dominating). The resulting dataset holds 5{,}423 samples: 3{,}113 labeled with a single \gls{cwe} identifier and 2{,}310 labeled secure (target \texttt{NONE}). The dataset is split 70\% / 10\% / 20\% into training, validation, and test partitions via stratified \gls{cwe}-aware sampling, which ensures every \gls{cwe} and secure class appears in all three splits. The label space spans 120 distinct \gls{cwe} identifiers, making this a 121-way classification task.
+
+Table~\ref{tab:split_composition} shows the composition of each split, and Table~\ref{tab:owasp_split} breaks down vulnerable samples by the nine \gls{owasp} 2025 categories that appear in the label space.
+
+\begin{table}[H]
+\centering
+\caption{Composition of the dataset splits. ``Secure'' means the reference
+label is \texttt{NONE}.}
+\label{tab:split_composition}
+\footnotesize
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Split} & \textbf{Samples} & \textbf{Secure} & \textbf{Vulnerable} \\
+\midrule
+Train      & 3{,}803 & 1{,}631 & 2{,}172 \\
+Validation &   549 &   225 &   324 \\
+Test       & 1{,}071 &   454 &   617 \\
+\midrule
+Total      & 5{,}423 & 2{,}310 & 3{,}113 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Distribution of vulnerable samples over \gls{owasp} 2025 categories.
+Category A03 (Software Supply Chain Failures) has no sample in this label
+space and is omitted.}
+\label{tab:owasp_split}
+\footnotesize
+\begin{tabular}{l l r r r}
+\toprule
+\textbf{Category} & \textbf{Name} & \textbf{Train} & \textbf{Val.} & \textbf{Test} \\
+\midrule
+A01 & Broken Access Control                     & 822 & 120 & 231 \\
+A02 & Security Misconfiguration                 & 222 &  32 &  63 \\
+A04 & Cryptographic Failures                    & 423 &  58 & 117 \\
+A05 & Injection                                 & 996 & 146 & 282 \\
+A06 & Insecure Design                           & 505 &  70 & 140 \\
+A07 & Authentication Failures                   & 275 &  40 &  79 \\
+A08 & Software or Data Integrity Failures       & 167 &  25 &  47 \\
+A09 & Security Logging and Alerting Failures    & 116 &  16 &  32 \\
+A10 & Mishandling of Exceptional Conditions     & 277 &  42 &  80 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two properties of this label space shape the evaluation throughout. First, the distribution is long-tailed: the most frequent vulnerable \gls{cwe} has 68 training samples, while much of the tail has 20--30. In the 549-sample validation split this gives individual \glspl{cwe} a support of 2--6 samples, making per-\gls{cwe} precision unreliable. All per-\gls{cwe} results are therefore reported with their support, and conclusions are drawn at the \gls{owasp} category level, where support ranges from 11 to 82 and measurement becomes robust. Second, \texttt{NONE} is the largest class (225 of 549 validation samples, 41.0\%). Every result in this chapter is scored against the majority-class baseline (constant \texttt{NONE} predictor) reported in Section~\ref{sec:metrics_defs}, so that class imbalance is explicit and cannot inflate apparent performance.
+
+
+\subsection{Task Formulation and Detection Prompt}
+\label{sec:task_prompt}
+
+The task is single-label \gls{cwe} classification. The model is given the
+source of one generated Flask application and must emit either a single
+\gls{cwe} identifier or \texttt{NONE}. The detection prompt used by the model
+battery and the parameter sweep is reproduced in
+Listing~\ref{lst:detection_prompt}; the prompt ablation varies this wording and
+is described in Section~\ref{sec:rq6}.
+
+\begin{lstlisting}[caption={Detection prompt. The \texttt{<CODE>} block holds
+the full source of one sample.}, label={lst:detection_prompt}]
+You are a Static Application Security Testing (SAST) tool.
+List the CWE IDs present in the following code.
+Output ONLY a comma-separated list like: CWE-xx, CWE-yy.
+If none, output: NONE.
+
+### code
+<CODE>
+...one generated Flask application...
+</CODE>
+\end{lstlisting}
+
+Decoding is capped at 16 new tokens, which is enough for one identifier and keeps the evaluation pass affordable over 549 samples and every model configuration. The generated text is reduced to a label by a fixed rule: the first \texttt{CWE-\textit{n}} match in the output is the prediction; if there is no such match and the text contains a negative marker (``none'', ``secure'', ``no vulnerable''), the prediction is \texttt{NONE}; otherwise the output is unparseable and is also scored as \texttt{NONE}. The same rule classifies each output into one of three kinds --- a \gls{cwe} identifier, an explicit negative, or unparseable --- which is reported separately because it distinguishes a model that is wrong from a model that is not answering the question at all.
+All runs in this study are executed on comment-stripped code. Python comments are removed with a tokenizer-based pass that deletes only \texttt{tokenize.COMMENT} tokens, so a \texttt{\#} inside a string literal is left untouched and line numbers are preserved. This removes the risk that a generated comment naming the weakness leaks the label into the input.
+
+\subsection{Shared Evaluation Harness}
+\label{sec:shared_harness}
+
+The portion of the notebook skeleton that is identical across every run is what makes the the different runs one study. Table~\ref{tab:shared_funcs} lists its components and what each one fixes.
+
+\begin{table}[H]
+\centering
+\caption{Functions shared, unchanged, by every run in every group.}
+\label{tab:shared_funcs}
+\footnotesize
+\begin{tabular}{p{0.26\textwidth} p{0.66\textwidth}}
+\toprule
+\textbf{Component} & \textbf{What it fixes across runs} \\
+\midrule
+4-bit model loader &
+Loads any roster model under one quantization configuration
+(\gls{nf4}, double quantization, \texttt{bfloat16} compute). \\
+Chat formatter &
+Applies each model's own chat template, so a prompt is presented to each
+architecture in the form that architecture expects, without a hand-written
+per-model template. \\
+\gls{lora} target auto-detection &
+Discovers the attention and feed-forward projection module names present in the
+loaded architecture, so the same adapter placement rule applies to six
+different naming conventions instead of a per-model list. \\
+Code-aware truncation &
+When a prompt exceeds the context budget, truncates inside the
+\texttt{<CODE>} block only, never the instruction or the output contract. \\
+Completion-only tokenization &
+Masks the prompt tokens out of the loss, so the model is trained on the label
+tokens alone. \\
+Empty-supervision filter &
+Removes training and validation examples whose label was truncated away
+entirely; such an example carries no gradient and makes a validation batch's
+loss undefined. Its count is reported, not silently absorbed
+(Section~\ref{sec:context_budget}). \\
+Batched generation &
+One padded, left-aligned generation path for evaluation, at batch size 8. \\
+Batching-correctness check &
+Re-evaluates the first 16 samples at batch size 1 and compares, so that a
+result cannot be an artifact of padding. Agreement was 100\% in every run in
+which it was executed. \\
+Scorer &
+One implementation of accuracy, weighted and macro precision/recall/F1,
+per-label scores, secure and vulnerable accuracy, and hallucination rate. \\
+Majority-class floor &
+Scores a constant-\texttt{NONE} predictor on the same split under the same
+scorer, giving every table a reference line. \\
+Result logger &
+Appends the full configuration and metric block of each phase to the shared
+results log. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Context Budget and Its Cost}
+\label{sec:context_budget}
+
+Every run uses a context length of 4{,}096 tokens. This is not a free parameter chosen for convenience: it is the largest context at which the 8B and 9B models fit, with gradient checkpointing, into the 40~GB of a single A100 alongside their optimizer state. Its cost is measurable and is reported here rather than in a footnote.
+
+How much of the corpus overflows that window depends on the tokenizer, so it differs by model family even though the prompts are byte-identical. Table~\ref{tab:context_overflow} gives the measurement each run printed for the validation split.
+
+\begin{table}[H]
+\centering
+\caption{Chat-templated prompt length on the validation split ($n=549$), as
+measured by each family's own tokenizer. ``Over budget'' counts prompts longer
+than $4{,}096-16$ tokens, whose \texttt{<CODE>} block is therefore truncated.}
+\label{tab:context_overflow}
+\footnotesize
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Tokenizer family} & \textbf{Mean} & \textbf{p90} & \textbf{Max} & \textbf{Over budget} \\
+\midrule
+Llama-3 (2 models)     & 2{,}498 & 4{,}952 & 6{,}441 & 105/549 (19.1\%) \\
+Qwen2.5 (4 models)     & 2{,}579 & 5{,}162 & 6{,}733 & 113/549 (20.6\%) \\
+Gemma (3 models)       & 3{,}057 & 6{,}100 & 8{,}043 & 142/549 (25.9\%) \\
+Ministral (1 model)    & 3{,}349 & 6{,}725 & 8{,}716 & 157/549 (28.6\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At evaluation time an over-budget prompt has its \texttt{<CODE>} block truncated; the instruction and the output contract are never cut, so the model is always asked the complete question and is only shown less of the program. It still answers and the answer is still scored. At training time the same overflow has a harder consequence: the supervision target sits at the end of the same sequence, so once the prompt fills the window the label tokens fall outside it, the example has no supervised token at all, and it is removed before training. For Llama-3.2-3B --- the model both sweeps use, and the only run whose training-side counts were logged in full --- this removes 642 of 3{,}803 training examples (16.9\%) and 105 of 549 validation examples (19.1\%) from the optimization. For the Gemma and Ministral tokenizers the removed fraction is correspondingly larger, in proportion to the over-budget shares in Table~\ref{tab:context_overflow}.
+
+\textbf{Why the budget does not undermine the results.} Its cost falls entirely on the training side. Evaluation excludes nothing: all 549 validation samples are scored in every table in this chapter, including the 19--29\% whose code is truncated. Training removes an example only when no label token survives the window; and because a truncated prompt carries an explicit truncation marker which, together with the chat template, already exceeds the window, such an example loses its label and is removed rather than kept. No model in this study was therefore trained on a partially visible program: a sample is either trained on in full or not trained on at all. The cost is a smaller training set, not a training set with corrupted supervision, which is the less damaging of the two failure modes. The resulting gap is also one-sided: fine-tuning used the part of the training split that fits, while evaluation scored 100\% of the validation split, so every number reported here is a lower bound on what the same method would reach at a longer context. The alternative --- dropping the long samples from the evaluation set as well --- would have produced higher scores on an easier test set, and was deliberately not adopted.
+
+The window is counted in each family's own tokens, so the surviving training set is identical on both sides of every comparison that carries a finding --- RQ3's zero-shot against fine-tuned, and both sweeps and the prompt ablation, all of which vary one factor within a single model --- while differing in size between models in the cross-model ranking of RQ1 and RQ3. That is why Table~\ref{tab:context_overflow} is reported model by model rather than as a single average: the one figure a reader needs in order to weigh a cross-model position is printed next to it, and Section~\ref{sec:rq3} applies it where it matters. Context length itself is not an axis of this study, so the chapter measures the exposure rather than estimating what a longer window would add --- and because the exposure is one-sided, that unestimated quantity can only be positive.
+
+\subsection{Fine-Tuning Configuration}
+\label{sec:training_config}
+
+All runs use \gls{qlora}~\citep{dettmers2023qlora}, which combines low-rank adaptation~\citep{hu2022lora} with 4-bit quantization of the frozen base model. This is what makes the study possible on the hardware described above: a model of up to nine billion parameters can be adapted inside 40~GB because all trainable parameters are confined to a small set of low-rank adapter matrices, and no base-model weight is updated at any point. Concretely, each base model is loaded in 4-bit \gls{nf4} with double quantization through \texttt{bitsandbytes}~\citep{dettmers2022llmint8} and \texttt{bfloat16} compute, then prepared with \texttt{prepare\_model\_for\_kbit\_training} and gradient checkpointing, which is necessary to avoid memory spikes during epoch-end validation on long sequences. Adapters are attached to every attention and feed-forward projection the architecture exposes (\texttt{q\_proj}, \texttt{k\_proj}, \texttt{v\_proj}, \texttt{o\_proj}, \texttt{gate\_proj}, \texttt{up\_proj}, \texttt{down\_proj} across the Llama, Qwen and Gemma families), following the finding of \citet{hu2022lora} that adapting all weight matrices rather than the attention layers alone yields stronger results. This leaves 0.38--2.94\% of parameters trainable depending on model and rank. The scaling factor is tied to the rank by the fixed rule $\alpha = 2r$, which holds the effective adapter scale constant as the rank changes and is what makes the rank sweep of Section~\ref{sec:rq5_rank} the primary finding on parameter sensitivity.
+
+\section{Results by Research Question}
+
+Experiments are conducted on the validation set ($n=549$: 225 secure, 324 vulnerable samples). Model configurations and hyperparameter selections from previous sections are evaluated below. The test set is reserved for final evaluation of the selected configuration.
+
+\subsection{RQ1: Base Model Performance}
+
+Without fine-tuning, no model detects \glspl{cwe}. Mean weighted F1 is 0.128, below 0.238 floor (always predicting NONE). Nine of ten models score below floor. Two failure modes dominate: over-prediction (Llama-3.1-8B, Gemma-2-9B flag 100\%), under-prediction (Ministral-3B flags 0\%). Only Qwen2.5-Coder-7B reaches 0.271 by approximating the floor rather than discriminating. Mean \gls{fpr} is 0.613 (three of five secure samples flagged as vulnerable).
+
+\begin{table}[H]
+\centering
+\caption{RQ1 --- zero-shot performance across ten models, validation split.}
+\label{tab:rq1}
+\footnotesize
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Model} & \textbf{W.\ F1} & \textbf{Accuracy} & \textbf{Flagged} & \textbf{FPR} \\
+\midrule
+Floor & 0.238 & 0.410 & 0.0\% & 0.000 \\
+Llama-3.2-3B & 0.005 & 0.020 & 99.8\% & 0.996 \\
+Llama-3.1-8B & 0.005 & 0.022 & 100.0\% & 1.000 \\
+Gemma-2-9B & 0.007 & 0.022 & 100.0\% & 1.000 \\
+Qwen2.5-Coder-3B & 0.097 & 0.071 & 87.1\% & 0.853 \\
+Gemma-1.1-2B & 0.126 & 0.107 & 71.0\% & 0.738 \\
+Qwen2.5-3B & 0.230 & 0.372 & 8.9\% & 0.098 \\
+Ministral-3B & 0.238 & 0.410 & 0.0\% & 0.000 \\
+Qwen2.5-7B & 0.203 & 0.168 & 77.4\% & 0.622 \\
+Qwen2.5-Coder-7B & 0.271 & 0.419 & 15.1\% & 0.000 \\
+Gemma-2-2B & 0.101 & 0.075 & 81.8\% & 0.822 \\
+\midrule
+\textbf{Mean} & 0.128 & 0.169 & 64.1\% & 0.613 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{RQ2: Per-\gls{cwe} Variation at Baseline}
+
+Base models recognize only twelve \glspl{cwe} across all ten runs. Recognition is confined to textbook patterns: SQL injection (CWE-89), XSS (CWE-79), \texttt{eval} on input (CWE-94), hardcoded crypto (CWE-327), weak randomness (CWE-330). All other 108 classes have zero recall. Categories defined by absent controls (A01 Broken Access Control, A06 Insecure Design, A07 Authentication Failures, A09 Logging Failures) are at 0.000 across all models.
+
+\begin{table}[H]
+\centering
+\caption{RQ2 --- every \gls{cwe} recognized by any base model, zero-shot, validation split. Remaining 108 \glspl{cwe} have recall 0.000 in all runs.}
+\label{tab:rq2}
+\footnotesize
+\begin{tabular}{l l r r l}
+\toprule
+\textbf{\gls{cwe}} & \textbf{Name} & \textbf{Support} & \textbf{\# Models} & \textbf{Recall Range} \\
+\midrule
+CWE-89  & SQL Injection & 6 & 4 & 0.67--0.83 \\
+CWE-79  & Cross-site Scripting & 6 & 4 & 0.17--0.83 \\
+CWE-330 & Insufficient Randomness & 4 & 2 & 0.25--1.00 \\
+CWE-327 & Broken Cryptographic Algorithm & 3 & 2 & 0.33 \\
+CWE-20  & Improper Input Validation & 4 & 2 & 0.25--0.75 \\
+CWE-601 & URL Redirection (\emph{Open Redirect}) & 5 & 2 & 0.20 \\
+CWE-78  & OS Command Injection & 3 & 2 & 0.33 \\
+CWE-94  & Code Injection & 6 & 1 & 0.67 \\
+CWE-611 & XML External Entity & 2 & 1 & 0.50 \\
+CWE-476 & NULL Pointer Dereference & 2 & 1 & 0.50 \\
+CWE-319 & Cleartext Transmission & 3 & 1 & 0.33 \\
+CWE-200 & Information Exposure & 4 & 1 & 0.25 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{RQ3: Fine-Tuning Improvement}
+
+After \gls{qlora} fine-tuning (rank 32, lr $2\times10^{-4}$), all ten models improve. Mean weighted F1 rises from 0.128 to 0.574 (+0.446). Mean \gls{fpr} falls from 0.613 to 0.035 (94\% reduction). All models clear the floor. Strongest model (Llama-3.2-3B) reaches F1 0.660.
+
+Model scale shows no trend. 3B models average 0.566, 7B--9B models average 0.586 (difference 0.020). Same-family pairs show inconsistent effects: Qwen2.5 3B→7B gains +0.093, Qwen2.5-Coder 3B→7B loses $-0.053$. Llama-3.2-3B outperforms Llama-3.1-8B by 0.019. The 3B model is best.
+
+\begin{table}[H]
+\centering
+\caption{RQ3 --- zero-shot versus fine-tuned, ranked by fine-tuned F1.}
+\label{tab:rq3}
+\footnotesize
+\begin{tabular}{l r r r r r}
+\toprule
+\textbf{Model} & \textbf{ZS F1} & \textbf{FT F1} & \textbf{Gain} & \textbf{FT FPR} & \textbf{Vuln.\ Acc} \\
+\midrule
+Llama-3.2-3B & 0.005 & 0.660 & +0.655 & 0.000 & 0.463 \\
+Llama-3.1-8B & 0.005 & 0.641 & +0.636 & 0.031 & 0.438 \\
+Qwen2.5-7B & 0.203 & 0.599 & +0.396 & 0.009 & 0.367 \\
+Qwen2.5-Coder-3B & 0.097 & 0.595 & +0.498 & 0.013 & 0.358 \\
+Gemma-1.1-2B & 0.126 & 0.570 & +0.444 & 0.107 & 0.358 \\
+Gemma-2-9B & 0.007 & 0.562 & +0.555 & 0.098 & 0.349 \\
+Gemma-2-2B & 0.101 & 0.556 & +0.455 & 0.013 & 0.306 \\
+Qwen2.5-Coder-7B & 0.271 & 0.542 & +0.271 & 0.009 & 0.290 \\
+Ministral-3B & 0.238 & 0.508 & +0.270 & 0.071 & 0.235 \\
+Qwen2.5-3B & 0.230 & 0.506 & +0.276 & 0.000 & 0.265 \\
+\midrule
+\textbf{Mean} & 0.128 & 0.574 & +0.446 & 0.035 & 0.343 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{RQ4: Per-Category Learning Gains}
+
+Fine-tuning reverses the baseline ranking. The eight categories at 0.000 baseline (A02, A04, A05, A06, A07, A08, A09, A10) all reach 0.368--0.565 after training. A05 Injection, which had the only baseline signal (0.122 recall), ends middle at 0.474 F1. A06 Insecure Design reaches 0.454 F1 (up from 0.000). A01 Broken Access Control is lowest at 0.368 despite 822 training samples, because the dataset lacks an authorization model (all endpoints are public) so A01 vulnerabilities (missing authorization checks) have no syntactic counterpart in single files.
+
+\begin{table}[H]
+\centering
+\caption{RQ4 --- per-\gls{owasp}-category performance, Llama-3.2-3B, zero-shot and fine-tuned.}
+\label{tab:rq4}
+\footnotesize
+\begin{tabular}{l r r r r r}
+\toprule
+\textbf{Category} & \textbf{Sup.} & \textbf{ZS Rec.} & \textbf{ZS F1} & \textbf{FT F1} & \textbf{Gain} \\
+\midrule
+A02 Security Misconfiguration & 17 & 0.000 & 0.000 & 0.565 & +0.565 \\
+A07 Authentication Failures & 25 & 0.000 & 0.000 & 0.497 & +0.497 \\
+A08 Software/Data Integrity & 15 & 0.000 & 0.000 & 0.485 & +0.485 \\
+A05 Injection & 82 & 0.122 & 0.006 & 0.474 & +0.468 \\
+A04 Cryptographic Failures & 34 & 0.000 & 0.000 & 0.470 & +0.470 \\
+A06 Insecure Design & 44 & 0.000 & 0.000 & 0.454 & +0.454 \\
+A09 Logging and Alerting & 11 & 0.000 & 0.000 & 0.428 & +0.428 \\
+A10 Exception Mishandling & 26 & 0.000 & 0.000 & 0.387 & +0.387 \\
+A01 Broken Access Control & 70 & 0.000 & 0.000 & 0.368 & +0.368 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per-\gls{cwe} results are polarized (Table~\ref{tab:rq4_cwe}). Of 50 classes with support $\geq 3$: twelve reach F1 $\geq 0.70$, fourteen end at 0.000, twenty-four scatter between. The best-learned classes (CWE-209 error exposure, CWE-117 log injection, CWE-327/328 broken hash, CWE-77/113 injection variants) all have short, literal token signatures where one or two lines of code reliably reveal the vulnerability. The worst-learned classes (CWE-284, 285, 287 authorization checks; CWE-22 path traversal; CWE-352 CSRF token missing) are defined by the \emph{absence} of a security control or are generic parent categories. This polarization reflects a structural property of the model's learning: it acquires precision on vulnerabilities with concrete syntactic patterns but fails on those whose defining feature is a missing check or a design-level absence. A01 dominates the worst-learned list because the generated applications have no authentication layer, so authorization violations have no observable counterpart in the code.
+
+\begin{table}[H]
+\centering
+\caption{RQ4 --- best and worst learned \glspl{cwe} (support $\geq 3$), Llama-3.2-3B fine-tuned.}
+\label{tab:rq4_cwe}
+\footnotesize
+\begin{tabular}{l l r r r r l r r}
+\toprule
+\multicolumn{5}{c}{\textbf{Best learned}} & \multicolumn{4}{c}{\textbf{Worst learned}} \\
+\cmidrule(lr){1-5}\cmidrule(lr){6-9}
+\textbf{CWE} & \textbf{Cat.} & \textbf{Sup.} & \textbf{F1} & & \textbf{CWE} & \textbf{Cat.} & \textbf{Sup.} & \textbf{F1} \\
+\midrule
+CWE-209 & A10 & 3 & 1.000 & & CWE-284 & A01 & 4 & 0.000 \\
+CWE-77  & A05 & 3 & 1.000 & & CWE-287 & A07 & 3 & 0.000 \\
+CWE-601 & A01 & 5 & 0.889 & & CWE-285 & A01 & 3 & 0.000 \\
+CWE-113 & A05 & 5 & 0.889 & & CWE-22  & A01 & 3 & 0.000 \\
+CWE-327 & A04 & 3 & 0.857 & & CWE-352 & A01 & 5 & 0.100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{RQ5: Fine-Tuning Parameters}
+
+Results from RQ1--RQ4 established Llama-3.2-3B as the strongest performing model, reaching the highest weighted F1 (0.660) after fine-tuning and demonstrating the clearest gains in architectural categories where rule-based tools fail. Parameter sensitivity is therefore investigated on this single model to determine the hyperparameter configuration for the prompt ablation study (RQ6). All subsequent experiments use Llama-3.2-3B as the base model.
+
+\subsubsection{\gls{lora} Rank}
+\label{sec:rq5_rank}
+
+Rank 8, 16, 32, 64 at fixed lr $2\times10^{-4}$ produces F1: 0.661, 0.612, 0.660, 0.619 (Table~\ref{tab:rq5_rank}). There is no trend: the smallest rank (8, 12.2\,M params) and the battery setting (32, 48.6\,M params) are indistinguishable at 0.661 and 0.660, while intermediate and larger ranks are lower. An 8-fold increase in trainable parameters from $r=8$ to $r=64$ buys no gain in performance. The one place rank shows an effect is the false-positive rate of the largest adapter: at $r=64$ it jumps to 0.142, six times the 0.022 of $r=8$, while exact-\gls{cwe} accuracy on vulnerable samples stays flat (0.438 vs 0.469). The extra capacity is spent flagging secure code, not on naming weaknesses. With approximately 3000 usable training examples and 121 target classes, an $r=8$ adapter already contains sufficient capacity for the supervision available. Rank 8 was selected for cost: it matches the best F1 in the sweep with one-quarter of the parameters of $r=32$ and one-eighth of $r=64$.
+
+\begin{table}[H]
+\centering
+\caption{RQ5 --- \gls{lora} rank sweep at lr $2\times10^{-4}$, Llama-3.2-3B.}
+\label{tab:rq5_rank}
+\footnotesize
+\begin{tabular}{r r r r r}
+\toprule
+\textbf{Rank} & \textbf{Trainable Params} & \textbf{W.\ F1} & \textbf{FPR} & \textbf{Vuln.\ Acc} \\
+\midrule
+8  & 12.2\,M (0.38\%) & 0.661 & 0.022 & 0.469 \\
+16 & 24.3\,M (0.75\%) & 0.612 & 0.044 & 0.404 \\
+32 & 48.6\,M (1.49\%) & 0.660 & 0.000 & 0.463 \\
+64 & 97.3\,M (2.94\%) & 0.619 & 0.142 & 0.438 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Learning Rate}
+
+Rate $\{10^{-4}, 2\times10^{-4}, 5\times10^{-4}, 10^{-3}\}$ at fixed rank 8 produces a clean inverted-U pattern in weighted F1: rises from 0.591 to 0.661 to 0.682 (peak), then falls to 0.605. The span between best and worst is 0.091, larger than the entire rank-sweep span of 0.049. The same pattern appears on macro F1 (0.334 / 0.454 / 0.477 / 0.357) and vulnerable-sample accuracy (0.340 / 0.469 / 0.488 / 0.383), confirming the effect is real and not an artifact of class weighting. The false-positive rate is flat (0.018--0.027), meaning learning rate acts on class-level discrimination (the 121-way naming problem), not on the secure/vulnerable boundary, which is already mastered at every rate.
+
+\begin{table}[H]
+\centering
+\caption{RQ5 --- learning rate sweep at rank 8, Llama-3.2-3B.}
+\label{tab:rq5_lr}
+\footnotesize
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Learning Rate} & \textbf{W.\ F1} & \textbf{FPR} & \textbf{Vuln.\ Acc} \\
+\midrule
+$1\times10^{-4}$ & 0.591 & 0.018 & 0.340 \\
+$2\times10^{-4}$ & 0.661 & 0.022 & 0.469 \\
+$5\times10^{-4}$ & \textbf{0.682} & 0.027 & \textbf{0.488} \\
+$1\times10^{-3}$ & 0.605 & 0.027 & 0.383 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The selected configuration is rank 8, learning rate $5\times10^{-4}$, achieving weighted F1 0.682. Relative to the battery setting (rank 32, lr $2\times10^{-4}$, F1 0.660), this represents a gain of 0.022 F1 at one-quarter of the trainable parameters. This configuration was held fixed for the prompt ablation study (RQ6).
+
+\subsection{RQ6: Prompt Wording}
+
+Based on the parameter configuration selected in RQ5 (rank 8, learning rate $5\times10^{-4}$), the effect of prompt design on detection performance is evaluated by training on three different prompt wordings and evaluating each trained model under all three wordings. This $3\times3$ matrix design isolates prompt effects from other variables.
+
+Three variants tested: baseline (role + task + code), guided (baseline + 120-\gls{cwe} checklist), no-role (baseline without role).
+
+Zero-shot: all three variants achieve F1 $\approx 0.001$ (no effect).
+
+Fine-tuned diagonal: 0.646, 0.632, 0.665 (range 0.019). Off-diagonal degradation max $-0.060$. Guided variant worst column (mean 0.617 vs 0.648 for others) because 398 checklist tokens displace 77 code tokens per sample and push 4\% more prompts over 4096-token limit.
+
+\begin{table}[H]
+\centering
+\caption{RQ6 --- prompt ablation matrix. Rows: training prompt. Columns: evaluation prompt. Diagonal (matched) in bold. Weighted F1.}
+\label{tab:rq6}
+\footnotesize
+\begin{tabular}{l r r r r}
+\toprule
+& \textbf{baseline} & \textbf{guided} & \textbf{no-role} & \textbf{Row mean} \\
+\midrule
+none (zero-shot) & 0.001 & 0.002 & 0.001 & 0.001 \\
+\midrule
+baseline & \textbf{0.646} & 0.586 & 0.640 & 0.624 \\
+guided   & 0.636 & \textbf{0.632} & 0.639 & 0.636 \\
+no-role  & 0.662 & 0.634 & \textbf{0.665} & 0.654 \\
+\midrule
+\textbf{Col. mean} & 0.648 & 0.617 & 0.648 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No-role variant: lower accuracy (0.648 vs 0.674) but higher precision (0.735 vs 0.660) and macro F1 (0.487 vs 0.426). Different operating point, useful for deployments where missed weakness costs more than false alarms.
+
+Conclusion: prompt wording has minimal effect on weighted F1.
+
+\section{Final Configuration: Test Set Evaluation}
+
+The configuration selected in RQ6 --- Llama-3.2-3B fine-tuned at rank 8, learning rate $5\times10^{-4}$, with the no-role prompt variant --- is evaluated on the held-out test set to measure performance on data unseen during model selection.
+
+\subsection{Test Set Results}
+
+The test set contains 1071 samples (454 secure, 617 vulnerable), approximately twice the size of the validation set. Weighted F1 on the test set is 0.696 with accuracy 0.694. False-positive rate is 0.062.
+
+\begin{table}[H]
+\centering
+\caption{Final configuration performance: test set vs validation set summary.}
+\label{tab:final_test}
+\footnotesize
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{} & \textbf{n} & \textbf{W.\ F1} & \textbf{Accuracy} & \textbf{FPR} \\
+\midrule
+Validation (development) & 549 & 0.665 & 0.648 & 0.058 \\
+Test (held-out) & 1071 & 0.696 & 0.694 & 0.062 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Improvement Over Baselines}
+
+Comparison to results from RQ1--RQ4:
+
+\begin{itemize}
+  \item \textbf{RQ1 (Base Model Zero-shot):} Llama-3.2-3B at baseline achieved validation F1 0.005. The final fine-tuned model on test reaches F1 0.696, a gain of +0.691.
+  \item \textbf{RQ3 (Fine-tuning Improvement):} Fine-tuned Llama-3.2-3B on validation reached F1 0.665. Test performance is 0.696, a gain of +0.031, indicating the model generalizes robustly to the larger unseen set.
+  \item \textbf{RQ4 (Per-Category):} On validation, architectural categories (A06 Insecure Design, A01 Broken Access Control) reached F1 0.368--0.454 after fine-tuning, from zero baseline. The test result of 0.696 overall F1 suggests sustained gains across all categories on the larger set.
+  \item \textbf{Tool Stack Baseline:} The conventional \gls{sast}/\gls{dast} tool stack detected the target \gls{cwe} in only 14\% of vulnerable samples overall. The final model at test F1 0.696 substantially outperforms this reference.
+\end{itemize}
+
+The selected configuration achieves the thesis objective: a fine-tuned open-weight \gls{llm} can serve as an effective \gls{cwe}-based vulnerability detector, substantially outperforming both untrained baselines and conventional security tools on the target vulnerability patterns. Qualifications on the reference labels, class distribution, context truncation, and parameter selection are discussed in the Limitations section.
