@@ -27,9 +27,7 @@ sharing the same task, product, style and producer model.
    each tool's reported CWE(s) relate to a sample's target CWE (exact /
    ancestor / descendant / sibling / unrelated), and
    `project/core/ground_truth.py` turns that into the project's actual
-   strict/relaxed ground-truth label. `project/core/fusion_model.py`
-   additionally computes three label-fusion methods (union, majority vote,
-   Dawid-Skene EM) for comparison. `project/core/llm_judge.py` runs an LLM
+   strict/relaxed ground-truth label. `project/core/llm_judge.py` runs an LLM
    judge panel (Claude, GPT-4.1) as an independent labeling source.
 5. **Dataset build** — `project/core/build_dataset.py` produces a balanced,
    stratified JSONL dataset from the labeled DB rows, ready for fine-tuning.
@@ -37,7 +35,7 @@ sharing the same task, product, style and producer model.
    on Google Colab (A100/T4), not locally; see `colab_outputs/`.
 
 `phase1-` and `phase2-acceptance-artifacts.md` hold results snapshots for
-each completed phase (detection rates, label fusion, LLM judge panel).
+each completed phase (detection rates, LLM judge panel).
 
 ## Repository layout
 
@@ -46,7 +44,7 @@ project/
   main.py            entry point for Stage 1 (code generation)
   scan_pipeline.py    entry point for Stage 2/3 (docker + SAST/DAST loop)
   db_filler.py, dast.py   ad hoc / targeted re-scan helpers
-  core/               DB access, tool result columns, fusion, ground truth,
+  core/               DB access, tool result columns, ground truth,
                        LLM judge panel, dataset builder, analysis scripts
   logic/               code generation, docker, SAST, DAST pipelines
   utils/               OWASP CWE lists, prompt templates, response parsing
@@ -133,9 +131,6 @@ python -c "from tools.sarif_scanners import CodeQLBatchAdapter, SnykCodeBatchAda
 
 # 4. Hierarchy-aware CWE matching (additive, read-only against the main table)
 python project/core/cwe_hierarchy_matching.py
-
-# 5. Label fusion (union / majority / Dawid-Skene, for comparison)
-python project/core/fusion_model.py
 
 # 6. Project's actual ground-truth label (strict, then relaxed)
 python project/core/ground_truth.py --match strict
